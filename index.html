@@ -95,12 +95,12 @@ input[type=text] { flex: 1; min-width: 0; font: 14px var(--f-mono); padding: 10p
 <body>
 <div class="wrap">
   <header>
-    <h1>M276 Сканер<small>C 300 4MATIC · OBDLink CX · v0.5</small></h1>
+    <h1>M276 Сканер<small>C 300 4MATIC · OBD BLE · v0.5</small></h1>
     <span id="status" class="status">не подключено</span>
   </header>
 
   <div class="row">
-    <button id="btnConnect" class="primary">Подключить OBDLink</button>
+    <button id="btnConnect" class="primary">Подключить адаптер</button>
     <button id="btnDemo">Демо без машины</button>
     <button id="btnDisconnect" disabled>Отключить</button>
   </div>
@@ -264,12 +264,21 @@ function setStatus(txt, cls) { const el = $("status"); el.textContent = txt; el.
 function enable(on) { ["btnLive", "btnRec", "btnInfo", "btnDtc", "btnMis", "btnFF", "btnRdy", "btnDiscId", "btnDiscKwp", "btnDiscUds", "btnSend", "btnDisconnect", "btnSession"].forEach(id => $(id).disabled = !on);
   $("btnConnect").disabled = on; $("btnDemo").disabled = on; $("btnApDemo").disabled = on || !!S.ap; }
 
-// ---------- BLE transport (OBDLink CX: service FFF0, notify FFF1, write FFF2) ----------
-const SVC = 0xFFF0, RX = 0xFFF1, TX = 0xFFF2;
+// ---------- BLE transport: любой BLE-адаптер ELM327 ----------
+// Известные BLE-каналы адаптеров. Сервис ищется по порядку, характеристики выбираются по свойствам (notify / write).
+const UART_SERVICES = [
+  0xFFF0,                                   // OBDLink CX, многие ELM327 BLE
+  "e7810a71-73ae-499d-8c15-faa9aef0c3f2",   // Vgate vLinker и новые Vgate
+  0xFFE0,                                   // модули HM-10
+  0x18F0,                                   // часть китайских ELM327 BLE
+  "6e400001-b5a3-f393-e0a9-e50e24dcca9e",   // Nordic UART
+  0xFFB0, 0xFFC0, 0xFFD0,
+];
 async function connect() {
   if (!navigator.bluetooth) { setStatus("нет Bluetooth в браузере", ""); log("Web Bluetooth недоступен. На iPhone откройте страницу в браузере Bluefy."); return; }
   try {
-    const dev = await navigator.bluetooth.requestDevice({ filters: [{ services: [SVC] }, { namePrefix: "OBDLink" }], optionalServices: [SVC] });
+    // показываем все BLE-устройства: имена у адаптеров разные (OBDLink, Vgate, IOS-Vlink, OBDII…)
+    const dev = await navigator.bluetooth.requestDevice({ acceptAllDevices: true, optionalServices: UART_SERVICES });
     await connectDevice(dev);
   } catch (e) { setStatus("не подключено"); log("Ошибка подключения: " + e.message); }
 }
@@ -278,7 +287,8 @@ async function writeRaw(str) {
   const data = new TextEncoder().encode(str);
   for (let i = 0; i < data.length; i += 20) {
     const chunk = data.slice(i, i + 20);
-    if (S.tx.writeValueWithResponse) await S.tx.writeValueWithResponse(chunk); else await S.tx.writeValue(chunk);
+    if (S.txNoResp && S.tx.writeValueWithoutResponse) await S.tx.writeValueWithoutResponse(chunk);
+    else if (S.tx.writeValueWithResponse) await S.tx.writeValueWithResponse(chunk); else await S.tx.writeValue(chunk);
   }
 }
 // Serialized command: returns raw text up to the '>' prompt
@@ -865,13 +875,30 @@ const spoken = {};
 function sayOnce(key, text, kind, gap = 30000) { const now = performance.now(); if (now - (spoken[key] || -1e9) < gap) return; spoken[key] = now; say(text, kind); }
 
 // ---------- connection with automatic reconnect ----------
+const uuidShort = u => /^0000([0-9a-f]{4})-0000-1000-8000-00805f9b34fb$/i.test(u) ? u.slice(4, 8).toUpperCase() : u;
+async function findUart(gatt) {
+  const found = [];
+  for (const id of UART_SERVICES) {
+    let svc; try { svc = await gatt.getPrimaryService(id); } catch (e) { continue; }
+    let chars = []; try { chars = await svc.getCharacteristics(); } catch (e) { continue; }
+    found.push(uuidShort(svc.uuid) + ": " + chars.map(c => uuidShort(c.uuid) + "[" + ["read", "write", "writeWithoutResponse", "notify", "indicate"].filter(k => c.properties[k]).join(",") + "]").join(" "));
+    const rx = chars.find(c => c.properties.notify) || chars.find(c => c.properties.indicate);
+    const tx = chars.find(c => c.properties.write && c === rx) || chars.find(c => c.properties.write) || chars.find(c => c.properties.writeWithoutResponse);
+    if (rx && tx) {
+      S.rx = rx; S.tx = tx; S.txNoResp = !tx.properties.write;
+      log(`Канал адаптера: сервис ${uuidShort(svc.uuid)}, чтение ${uuidShort(rx.uuid)}, запись ${uuidShort(tx.uuid)}${S.txNoResp ? " (без подтверждения)" : ""}`);
+      return;
+    }
+  }
+  log("Найденные сервисы: " + (found.join(" | ") || "ни одного из известных"));
+  throw new Error("у адаптера не найден канал ELM327. Пришли скрин консоли в чат");
+}
 async function connectDevice(dev) {
   S.dev = dev;
   if (!dev._m276) { dev.addEventListener("gattserverdisconnected", onDisconnect); dev._m276 = true; }
   setStatus("подключение…");
   const gatt = await dev.gatt.connect();
-  const svc = await gatt.getPrimaryService(SVC);
-  S.rx = await svc.getCharacteristic(RX); S.tx = await svc.getCharacteristic(TX);
+  await findUart(gatt);
   if (!S.rx._m276) { S.rx.addEventListener("characteristicvaluechanged", e => onData(new TextDecoder().decode(e.target.value))); S.rx._m276 = true; }
   await S.rx.startNotifications();
   S.hdr = null; await initAdapter(); S.hdr = "7E0";
@@ -884,7 +911,7 @@ function onDisconnect() {
   if (S.ap) sayOnce("lost", "Связь с адаптером потеряна. Переподключаюсь", "bad", 15000); else enable(false);
 }
 async function knownDevice() {
-  try { const ds = await navigator.bluetooth?.getDevices?.(); return ds?.find(d => /obdlink/i.test(d.name || "")) || ds?.[0] || null; } catch (e) { return null; }
+  try { const ds = await navigator.bluetooth?.getDevices?.(); return ds?.find(d => /obdlink|vgate|vlink|icar|obd|elm/i.test(d.name || "")) || ds?.[0] || null; } catch (e) { return null; }
 }
 async function tryAutoConnect() {
   const d = S.dev || await knownDevice(); if (!d) return false;
