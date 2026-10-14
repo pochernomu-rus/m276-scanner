@@ -74,13 +74,28 @@ input[type=text] { flex: 1; min-width: 0; font: 14px var(--f-mono); padding: 10p
 .mis th { font: 500 11px var(--f-mono); color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
 .mis tr.hot td { color: var(--warn); }
 .session .note { margin: 0; }
+.scen { display: grid; gap: 12px; }
+.scen > div { border-top: 1px solid var(--line); padding-top: 10px; }
+.scen > div:first-child { border-top: 0; padding-top: 0; }
+.scen h3 { font: 600 15px var(--f-display); margin: 0 0 4px; }
+.rep { display: flex; gap: 8px; align-items: center; justify-content: space-between; border-top: 1px solid var(--line); padding: 8px 0; }
+.rep:first-child { border-top: 0; }
+/* экран поездки: крупно, читается боковым зрением, без мелких кнопок */
+.drive { position: fixed; inset: 0; z-index: 10; background: var(--bg); display: grid; grid-template-rows: auto auto 1fr auto; gap: 14px;
+  padding: calc(16px + env(safe-area-inset-top, 0px)) max(16px, env(safe-area-inset-right, 0px)) calc(16px + env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px)); }
+.drive[hidden] { display: none; }
+.drive .st { font: 600 26px/1.2 var(--f-display); }
+.drive .msg { font-size: 16px; color: var(--muted); min-height: 3em; }
+.dgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; align-content: start; }
+.dgrid .g .v { font-size: 40px; }
+.drive button { min-height: 56px; }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 </style>
 </head>
 <body>
 <div class="wrap">
   <header>
-    <h1>M276 Сканер<small>C 300 4MATIC · OBDLink CX · v0.4</small></h1>
+    <h1>M276 Сканер<small>C 300 4MATIC · OBDLink CX · v0.5</small></h1>
     <span id="status" class="status">не подключено</span>
   </header>
 
@@ -91,12 +106,36 @@ input[type=text] { flex: 1; min-width: 0; font: 14px var(--f-mono); padding: 10p
   </div>
 
   <section class="session">
-    <h2>Сессия для Claude</h2>
-    <p class="note">Одна кнопка: читает калибровку и ошибки, пишет лог, пока ты едешь. Вторым нажатием проверяет ошибки ещё раз и сохраняет всё одним файлом. Его и пришли в чат.</p>
-    <div class="row" style="margin-top:8px">
-      <button id="btnSession" class="primary" disabled>Начать сессию</button>
-      <span id="sessInfo" class="meta" style="align-self:center"></span>
+    <h2>Сценарии сканирования</h2>
+    <div class="scen">
+      <div>
+        <h3>Сессия вручную</h3>
+        <p class="note">Читает калибровку и ошибки, пишет лог, пока ты едешь. Вторым нажатием проверяет ошибки ещё раз и сохраняет всё одним файлом. Его и пришли в чат.</p>
+        <div class="row" style="margin-top:8px">
+          <button id="btnSession" class="primary" disabled>Начать сессию</button>
+          <span id="sessInfo" class="meta" style="align-self:center"></span>
+        </div>
+      </div>
+      <div>
+        <h3>Автопилот поездки</h3>
+        <p class="note">Без телефона в дороге. Включи до запуска мотора: сам дождётся зажигания, проверит ошибки и коробку, начнёт запись при запуске мотора и сохранит отчёт, когда мотор заглохнет. О каждом шаге говорит голосом. Телефон держи с включённым экраном и Bluefy на переднем плане.</p>
+        <div class="row" style="margin-top:8px">
+          <button id="btnAp" class="primary">Включить автопилот</button>
+          <button id="btnApDemo">Демо автопилота</button>
+          <label class="meta" style="align-self:center"><input type="checkbox" id="optVoice" checked> голос</label>
+          <span id="apInfo" class="meta" style="align-self:center"></span>
+        </div>
+      </div>
+      <div>
+        <h3>Разведка блоков</h3>
+        <p class="note">Поиск скрытых параметров, например температуры масла АКПП. Отдельный блок ниже. Автопилот делает её сам при первой проверке.</p>
+      </div>
     </div>
+  </section>
+
+  <section>
+    <h2>Сохранённые отчёты</h2>
+    <div id="reports"></div>
   </section>
 
   <section>
@@ -173,8 +212,23 @@ input[type=text] { flex: 1; min-width: 0; font: 14px var(--f-mono); padding: 10p
   </section>
 </div>
 
+<div id="drive" class="drive" hidden>
+  <div id="drvStatus" class="st">Жду зажигание</div>
+  <div id="drvMsg" class="msg"></div>
+  <div class="dgrid">
+    <div class="g"><span class="k">Обороты</span><span class="v"><b id="d_rpm">—</b></span></div>
+    <div class="g"><span class="k">Скорость</span><span class="v"><b id="d_speed">—</b></span></div>
+    <div class="g"><span class="k">ОЖ °C</span><span class="v"><b id="d_coolant">—</b></span></div>
+    <div class="g"><span class="k">Угол °</span><span class="v"><b id="d_timing">—</b></span></div>
+    <div class="g"><span class="k">λ ряд 1</span><span class="v"><b id="d_lambda1">—</b></span></div>
+    <div class="g"><span class="k">λ ряд 2</span><span class="v"><b id="d_lambda2">—</b></span></div>
+  </div>
+  <button id="btnApQuit">Выключить автопилот</button>
+</div>
+
 <script>
 "use strict";
+const APP = "v0.5";
 // ---------- PID table: bytes, decode, label, unit ----------
 const PIDS = {
   0x04: { n: 1, f: b => b[0] * 100 / 255, k: "load", label: "Нагрузка", unit: "%", d: 0 },
@@ -208,23 +262,15 @@ const S = { dev: null, rx: null, tx: null, buf: "", waiter: null, busy: Promise.
 function log(s) { S.logLines.push(new Date().toISOString().slice(11, 23) + " " + s); if (S.logLines.length > 400) S.logLines.shift(); const el = $("log"); el.textContent = (el.textContent + s + "\n").slice(-6000); el.scrollTop = el.scrollHeight; }
 function setStatus(txt, cls) { const el = $("status"); el.textContent = txt; el.className = "status " + (cls || ""); }
 function enable(on) { ["btnLive", "btnRec", "btnInfo", "btnDtc", "btnMis", "btnFF", "btnRdy", "btnDiscId", "btnDiscKwp", "btnDiscUds", "btnSend", "btnDisconnect", "btnSession"].forEach(id => $(id).disabled = !on);
-  $("btnConnect").disabled = on; $("btnDemo").disabled = on; }
+  $("btnConnect").disabled = on; $("btnDemo").disabled = on; $("btnApDemo").disabled = on || !!S.ap; }
 
 // ---------- BLE transport (OBDLink CX: service FFF0, notify FFF1, write FFF2) ----------
 const SVC = 0xFFF0, RX = 0xFFF1, TX = 0xFFF2;
 async function connect() {
   if (!navigator.bluetooth) { setStatus("нет Bluetooth в браузере", ""); log("Web Bluetooth недоступен. На iPhone откройте страницу в браузере Bluefy."); return; }
   try {
-    S.dev = await navigator.bluetooth.requestDevice({ filters: [{ services: [SVC] }, { namePrefix: "OBDLink" }], optionalServices: [SVC] });
-    S.dev.addEventListener("gattserverdisconnected", () => { setStatus("связь потеряна", ""); stopLive(); enable(false); });
-    setStatus("подключение…");
-    const gatt = await S.dev.gatt.connect();
-    const svc = await gatt.getPrimaryService(SVC);
-    S.rx = await svc.getCharacteristic(RX); S.tx = await svc.getCharacteristic(TX);
-    S.rx.addEventListener("characteristicvaluechanged", e => onData(new TextDecoder().decode(e.target.value)));
-    await S.rx.startNotifications();
-    await initAdapter();
-    setStatus("подключено", "on"); enable(true);
+    const dev = await navigator.bluetooth.requestDevice({ filters: [{ services: [SVC] }, { namePrefix: "OBDLink" }], optionalServices: [SVC] });
+    await connectDevice(dev);
   } catch (e) { setStatus("не подключено"); log("Ошибка подключения: " + e.message); }
 }
 function onData(s) { S.buf += s; if (S.buf.includes(">") && S.waiter) { const r = S.buf; S.buf = ""; const w = S.waiter; S.waiter = null; w(r); } }
@@ -315,6 +361,8 @@ async function liveLoop() {
       S.voltT = performance.now();
       try { const x = parseFloat(await cmd("ATRV", 1500)); if (!Number.isNaN(x)) { fresh.voltage = x; S.vals.voltage = x; } } catch (e) {}
     }
+    if (S.ap && Object.keys(fresh).length) S.ap.lastFresh = performance.now();
+    await apTcuTick().catch(e => log("АКПП: " + e.message));
     S.cycles++; const now = performance.now();
     if (now - S.rateT > 1000) { $("rate").textContent = "· " + (S.cycles * 1000 / (now - S.rateT)).toFixed(1) + " Гц" + (S.pullMode ? " · режим разгона" : ""); S.cycles = 0; S.rateT = now; }
     onSample(now, fresh);
@@ -357,6 +405,12 @@ function renderAlerts() {
       if (max - last >= 3) a.push(["bad", `Провал угла ${(max - last).toFixed(1)}° за доли секунды: возможен откат по детонации.`]); }
   }
   ["ltft1", "ltft2"].forEach(k => { if (Math.abs(v[k] ?? 0) > 10) a.push(["warn", `Долгосрочная коррекция ${PIDS[k === "ltft1" ? 7 : 9].label}: ${v[k].toFixed(1)}%. Больше ±10% значит, что модель воздуха не совпадает с мотором.`]); });
+  if (S.ap) {
+    if (a.some(([c, t]) => c === "bad" && /Бедно/.test(t))) sayOnce("lean", "Бедная смесь на полном газу", "bad", 20000);
+    if (a.some(([c, t]) => c === "bad" && /Провал угла/.test(t))) sayOnce("knock", "Провал угла зажигания", "bad", 20000);
+    if ((v.coolant ?? 0) > 110) sayOnce("hot", "Перегрев. Температура " + v.coolant.toFixed(0), "bad", 60000);
+    if ((v.rpm ?? 0) > 500 && v.voltage != null && v.voltage < 12.5) sayOnce("volt", "Низкое напряжение бортсети", "warn", 120000);
+  }
   // каждое предупреждение держится 3 с после последнего срабатывания, чтобы не мигать
   const now = performance.now();
   a.forEach(([c, t], i) => { const key = c + ":" + t.replace(/[-\d.]+/g, ""); S.alertHold[key] = { c, t, until: now + 3000, order: S.alertHold[key]?.order ?? S.alertSeq++ }; });
@@ -381,6 +435,7 @@ function renderGauges() {
 function renderValues() {
   ORDER.forEach(p => { const d = PIDS[p], el = $("g_" + d.k); if (!el) return; const x = S.vals[d.k];
     el.className = "g " + gaugeClass(d.k, x); el.querySelector("b").textContent = x == null ? "—" : x.toFixed(d.d); });
+  if (S.ap) ["rpm", "speed", "coolant", "timing", "lambda1", "lambda2"].forEach(k => { const x = S.vals[k], d = k.startsWith("lambda") ? 3 : k === "timing" ? 1 : 0; $("d_" + k).textContent = x == null ? "—" : x.toFixed(d); });
   const ve = $("g_voltage"); if (ve) { const x = S.vals.voltage; ve.className = "g " + gaugeClass("voltage", x); ve.querySelector("b").textContent = x == null ? "—" : x.toFixed(1); }
 }
 function toggleRec() {
@@ -447,12 +502,15 @@ function buildReportText(r, rows) {
   const L = [];
   L.push("M276 СКАНЕР · ОТЧЁТ СЕССИИ" + (r.demo ? " · ДЕМО (данные выдуманы)" : ""));
   L.push("=".repeat(44));
-  L.push(`Машина:      ${r.car}`, `Начало:      ${r.started}`, `Конец:       ${r.finished}`, `Версия:      сканер ${r.app}`, "");
+  L.push(`Машина:      ${r.car}`, `Начало:      ${r.started}`, `Конец:       ${r.finished}`, `Версия:      сканер ${r.app}`, `Режим:       ${r.auto ? "автопилот" : "ручная сессия"}`);
+  if (r.note) L.push(`Примечание:  ${r.note}`);
+  L.push("");
   L.push("АДАПТЕР", `  ${r.adapter.device} · ${r.adapter.id} · напряжение ${r.adapter.voltage} · протокол ${r.adapter.protocol}`, "");
   L.push("ЭБУ ДВИГАТЕЛЯ", `  VIN:            ${r.ecu.vin}`, `  Calibration ID: ${r.ecu.calibrationId}`, `  CVN:            ${r.ecu.cvn}`, "");
   L.push("ОШИБКИ", `  в начале: сохранённые ${r.dtc.atStart.stored}; ожидающие ${r.dtc.atStart.pending}`, `  в конце:  сохранённые ${r.dtc.atEnd.stored}; ожидающие ${r.dtc.atEnd.pending}`, "");
   L.push("СТОП-КАДР ОШИБКИ (в начале)", ffText(r.freezeFrame), "", "ГОТОВНОСТЬ МОНИТОРОВ (в начале)", rdyText(r.readiness), "");
   L.push("ПРОПУСКИ ЗАЖИГАНИЯ (режим 06), в начале", misfireText(r.misfire.atStart), "ПРОПУСКИ ЗАЖИГАНИЯ, в конце", misfireText(r.misfire.atEnd), "");
+  if (r.tcu) L.push("АКПП (разведка в поездке, значения каждые 30 с)", tcuText(r), "");
   L.push(`УЧАСТКИ (всего ${dur.toFixed(0)} с, ${rows.length} строк)`);
   ["холостой", "круиз", "разгон", "торможение"].forEach(p => L.push(`  ${p.padEnd(11)} ${(total[p] || 0).toFixed(1)} с`));
   L.push("");
@@ -686,24 +744,14 @@ async function sessionClick() {
       await readDtc();
       S.session.misfireAtEnd = await readMisfire();
       const rows = S.lastRows || [];
-      const report = {
-        format: "m276-scanner-report", app: "v0.4", demo: S.demo,
-        car: "Mercedes C 300 4MATIC W204, M276 DE35",
-        started: S.session.started, finished: new Date().toISOString(),
-        adapter: S.session.adapter,
-        ecu: { vin: S.info.vin, calibrationId: S.info.calibrationId, cvn: S.info.cvn },
-        dtc: { atStart: S.session.dtcAtStart, atEnd: { stored: S.info.dtcStored, pending: S.info.dtcPending } },
-        misfire: { atStart: S.session.misfireAtStart, atEnd: S.session.misfireAtEnd },
-        freezeFrame: S.session.freezeFrame, readiness: S.session.readiness,
-        supportedPids: [...S.supported].map(hex2),
-        console: S.logLines.slice(),
-      };
-      const name = "m276_session_" + report.finished.replace(/[:T]/g, "-").slice(0, 19) + ".txt";
-      S.lastReport = buildReportText(report, rows);
+      S.session.dtcAtEnd = { stored: S.info.dtcStored, pending: S.info.dtcPending };
+      const rep = makeReport(S.session, rows);
+      await saveReport(rep); renderReports();
+      S.lastReport = rep.text;
       S.session = null;
       btn.textContent = "Начать сессию";
-      $("sessInfo").textContent = "готово: " + rows.length + " строк лога. Пришли файл " + name + " в чат";
-      await shareFile(name, S.lastReport, "text/plain");
+      $("sessInfo").textContent = "готово: " + rows.length + " строк лога. Пришли файл " + rep.name + " в чат";
+      await shareFile(rep.name, rep.text, "text/plain");
     }
   } catch (e) { log("Сессия: " + e.message); $("sessInfo").textContent = "ошибка: " + e.message; }
   btn.disabled = false;
@@ -754,11 +802,12 @@ function demoReply(c) {
     return "NO DATA";
   }
   if (S.demoHdr && S.demoHdr !== "7E0") return "NO DATA";
+  if (S.demoEng && !S.demoEng.ign && !/^(AT|ST)/.test(c)) return "NO DATA";
   if (c === "0101") return "410100076101";
   if (c === "020200") return "4202000000";
   if (c.startsWith("22")) return c === "22F190" ? "7F2231" : "7F2231";
   if (/^1A/.test(c)) return "7F1A11";
-  if (c.startsWith("01")) { const s = demoState(), pids = c.slice(2).match(/../g).map(h => parseInt(h, 16));
+  if (c.startsWith("01")) { const s = demoState(); if (S.demoEng && !S.demoEng.run) Object.assign(s, { rpm: 0, speed: 0, thr: 0, load: 0, maf: 0, timing: 0 }); const pids = c.slice(2).match(/../g).map(h => parseInt(h, 16));
     return "41" + pids.map(p => hex2(p) + (demoByte(p, s) || []).map(hex2).join("")).join(""); }
   if (c === "0902") return "014\r0:490201574444\r1:32303430303030\r2:41303030303030";
   if (c === "0904") return "NO DATA";
@@ -771,10 +820,298 @@ function demoReply(c) {
 }
 function startDemo() { S.demo = true; S.supported = new Set(ORDER); setStatus("демо-режим", "demo"); enable(true); renderGauges(); log("Демо: данные выдуманы, чтобы показать работу страницы. Это не твоя машина."); startLive(); }
 
+// ---------- storage: IndexedDB (лог поездки не теряется при обрыве или перезагрузке) ----------
+const DB = { db: null };
+function idb() {
+  return new Promise((res, rej) => {
+    if (DB.db) return res(DB.db);
+    const r = indexedDB.open("m276", 1);
+    r.onupgradeneeded = () => { r.result.createObjectStore("kv"); r.result.createObjectStore("reports", { keyPath: "id" }); };
+    r.onsuccess = () => res(DB.db = r.result); r.onerror = () => rej(r.error);
+  });
+}
+async function dbDo(store, mode, fn) {
+  const d = await idb();
+  return new Promise((res, rej) => { const t = d.transaction(store, mode), q = fn(t.objectStore(store)); t.oncomplete = () => res(q?.result); t.onerror = () => rej(t.error); });
+}
+const kvGet = k => dbDo("kv", "readonly", s => s.get(k)).catch(() => null);
+const kvSet = (k, v) => dbDo("kv", "readwrite", s => s.put(v, k)).catch(e => log("Память: " + e.message));
+const kvDel = k => dbDo("kv", "readwrite", s => s.delete(k)).catch(() => {});
+const saveReport = r => dbDo("reports", "readwrite", s => s.put(r)).catch(e => log("Память: " + e.message));
+const allReports = () => dbDo("reports", "readonly", s => s.getAll()).catch(() => []);
+
+// ---------- sound and voice ----------
+const AUD = { ctx: null };
+function unlockAudio() {
+  try { AUD.ctx = AUD.ctx || new (window.AudioContext || window.webkitAudioContext)(); AUD.ctx.resume(); } catch (e) {}
+  try { const u = new SpeechSynthesisUtterance(" "); u.volume = 0; speechSynthesis.speak(u); } catch (e) {}
+}
+function beep(kind) {
+  const c = AUD.ctx; if (!c) return;
+  const seq = { ok: [[880, .12], [1320, .14]], warn: [[520, .2], [520, .2]], bad: [[330, .35], [260, .35]], tick: [[700, .05]] }[kind] || [[880, .1]];
+  let t = c.currentTime + 0.02;
+  seq.forEach(([f, d]) => { const o = c.createOscillator(), g = c.createGain(); o.frequency.value = f; g.gain.setValueAtTime(0.25, t); g.gain.exponentialRampToValueAtTime(0.001, t + d);
+    o.connect(g).connect(c.destination); o.start(t); o.stop(t + d); t += d + 0.06; });
+}
+function say(text, kind = "ok") {
+  beep(kind); log("Голос: " + text);
+  if ($("drvMsg")) $("drvMsg").textContent = text;
+  try { if ($("optVoice") && !$("optVoice").checked) return;
+    const u = new SpeechSynthesisUtterance(text); u.lang = "ru-RU"; u.rate = 1.05;
+    const v = speechSynthesis.getVoices().find(v => /^ru/i.test(v.lang)); if (v) u.voice = v;
+    speechSynthesis.speak(u); } catch (e) {}
+}
+const spoken = {};
+function sayOnce(key, text, kind, gap = 30000) { const now = performance.now(); if (now - (spoken[key] || -1e9) < gap) return; spoken[key] = now; say(text, kind); }
+
+// ---------- connection with automatic reconnect ----------
+async function connectDevice(dev) {
+  S.dev = dev;
+  if (!dev._m276) { dev.addEventListener("gattserverdisconnected", onDisconnect); dev._m276 = true; }
+  setStatus("подключение…");
+  const gatt = await dev.gatt.connect();
+  const svc = await gatt.getPrimaryService(SVC);
+  S.rx = await svc.getCharacteristic(RX); S.tx = await svc.getCharacteristic(TX);
+  if (!S.rx._m276) { S.rx.addEventListener("characteristicvaluechanged", e => onData(new TextDecoder().decode(e.target.value))); S.rx._m276 = true; }
+  await S.rx.startNotifications();
+  S.hdr = null; await initAdapter(); S.hdr = "7E0";
+  S.connected = true; setStatus("подключено", "on"); enable(true);
+}
+function onDisconnect() {
+  S.connected = false; setStatus("связь потеряна", "");
+  if (S.waiter) { const w = S.waiter; S.waiter = null; w(""); }
+  stopLive();
+  if (S.ap) sayOnce("lost", "Связь с адаптером потеряна. Переподключаюсь", "bad", 15000); else enable(false);
+}
+async function knownDevice() {
+  try { const ds = await navigator.bluetooth?.getDevices?.(); return ds?.find(d => /obdlink/i.test(d.name || "")) || ds?.[0] || null; } catch (e) { return null; }
+}
+async function tryAutoConnect() {
+  const d = S.dev || await knownDevice(); if (!d) return false;
+  try { await connectDevice(d); return true; } catch (e) { log("Автоподключение: " + e.message); return false; }
+}
+
+// ---------- TCU (АКПП) parameters: found once, then read every 30 s ----------
+async function scanTcuAuto(target) {
+  await setHeader(target);
+  const ident = [];
+  for (const q of ["0100", "1A86", "1A87", "22F190", "22F187"]) ident.push({ q, ...classify(parseHex(await cmd(q, 2000).catch(() => "")), parseInt(q.slice(0, 2), 16)) });
+  const any = ident.some(x => x.kind !== "нет ответа"), uds = ident.some(x => x.q.startsWith("22") && x.kind === "ok"), kwp = ident.some(x => x.q.startsWith("1A") && x.kind === "ok");
+  const cfg = { target, protocol: !any ? "нет ответа" : uds ? "UDS" : kwp ? "KWP" : "неясно", ids: [], checked: new Date().toISOString() };
+  if (any && !uds) {
+    for (let id = 0; id <= 0xFF; id++) {
+      const q = "21" + hex2(id), r = classify(parseHex(await cmd(q, 1500).catch(() => "")), 0x21);
+      if (r.kind === "ok") cfg.ids.push(q);
+      if (id % 32 === 31) apSet(`Разведка АКПП: ${id + 1} из 256, найдено ${cfg.ids.length}`);
+    }
+  }
+  S.disc = { target, ident, protocol: cfg.protocol, hits: cfg.ids.map(q => ({ q, data: "" })), snaps: [] };
+  await kvSet("tcu", cfg);
+  return cfg;
+}
+async function readTcuValues(cfg) {
+  const values = {};
+  if (!cfg?.ids?.length) return values;
+  await setHeader(cfg.target);
+  for (const q of cfg.ids) { const r = classify(parseHex(await cmd(q, 1500).catch(() => "")), parseInt(q.slice(0, 2), 16)); values[q] = r.kind === "ok" ? r.data : r.kind; }
+  await setHeader("7E0");
+  return values;
+}
+
+// ---------- report shared by the manual session and the autopilot ----------
+function makeReport(sess, rows, note) {
+  const report = {
+    format: "m276-scanner-report", app: APP, demo: S.demo, auto: !!sess.auto, note: note || "",
+    car: "Mercedes C 300 4MATIC W204, M276 DE35",
+    started: sess.started, finished: new Date().toISOString(),
+    adapter: sess.adapter || {}, ecu: { vin: S.info.vin, calibrationId: S.info.calibrationId, cvn: S.info.cvn },
+    dtc: { atStart: sess.dtcAtStart || {}, atEnd: sess.dtcAtEnd || { stored: S.info.dtcStored, pending: S.info.dtcPending } },
+    misfire: { atStart: sess.misfireAtStart, atEnd: sess.misfireAtEnd },
+    freezeFrame: sess.freezeFrame, readiness: sess.readiness, tcu: sess.tcu, tcuSeries: sess.tcuSeries || [],
+    supportedPids: [...S.supported].map(hex2), console: S.logLines.slice(),
+  };
+  const pulls = segments(rows).filter(s => s.phase === "разгон" && s.end - s.start >= 1).length;
+  const minutes = rows.length ? rows[rows.length - 1].t / 60 : 0;
+  const name = "m276_session_" + report.finished.replace(/[:T]/g, "-").slice(0, 19) + ".txt";
+  return { id: report.finished, name, text: buildReportText(report, rows), summary: `${minutes.toFixed(0)} мин · разгонов ${pulls} · строк ${rows.length}${note ? " · " + note : ""}`, minutes, pulls };
+}
+function tcuText(r) {
+  const L = [];
+  if (!r.tcu) return "  не читался";
+  L.push(`  блок ${r.tcu.target}, протокол ${r.tcu.protocol}, параметров ${r.tcu.ids.length}`);
+  const ids = r.tcu.ids.filter(q => new Set(r.tcuSeries.map(x => x.values[q])).size > 1);
+  L.push(`  менялись за поездку: ${ids.length ? ids.join(" ") : "нет"}`);
+  if (r.tcuSeries.length) {
+    L.push("  t_s,coolant_C," + r.tcu.ids.join(","));
+    r.tcuSeries.forEach(x => L.push(`  ${x.t.toFixed(0)},${x.coolant ?? ""},` + r.tcu.ids.map(q => x.values[q] ?? "").join(",")));
+  }
+  return L.join("\n");
+}
+
+// ---------- autopilot ----------
+function apSet(text) { if ($("drvStatus")) $("drvStatus").textContent = text; }
+function showDrive(on) { $("drive").hidden = !on; document.body.style.overflow = on ? "hidden" : ""; }
+async function ecuAlive() { await setHeader("7E0"); const b = parseHex(await cmd("0100", 2000).catch(() => "")); return !!(b && b[0] === 0x41); }
+async function readRpm() { await setHeader("7E0"); const b = parseHex(await cmd("010C", 2000).catch(() => "")); if (!b || b[0] !== 0x41) return null; return (b[2] * 256 + b[3]) / 4; }
+async function apStart() {
+  unlockAudio();
+  if (S.ap) return;
+  if (S.live) stopLive();
+  S.ap = { state: "ignition", sess: null, lastSave: 0, lastNews: 0 };
+  $("btnAp").disabled = true; $("apInfo").textContent = "работает";
+  showDrive(true); say("Автопилот включён");
+  apLoop();
+}
+async function apQuit() {
+  if (!S.ap) return;
+  S.ap.quit = true;
+  if (S.ap.state === "trip") await apEndTrip("автопилот остановлен вручную");
+  S.ap = null; stopLive(); showDrive(false); say("Автопилот выключен", "tick");
+  $("btnAp").disabled = false; $("apInfo").textContent = "";
+  if (S.demoEng) { S.demoEng = null; S.demo = false; enable(false); setStatus("не подключено"); }
+}
+async function apLoop() {
+  while (S.ap && !S.ap.quit) {
+    try {
+      if (!S.connected && !S.demo) {
+        apSet("Ищу адаптер…");
+        if (await tryAutoConnect()) say("Адаптер подключён" + (S.ap.state === "trip" ? ". Запись продолжается" : ""));
+        else { apSet("Адаптер не найден. Проверь, что он вставлен"); await sleep(3000); continue; }
+      }
+      const st = S.ap.state;
+      if (st === "ignition") {
+        apSet("Жду зажигание");
+        if (await ecuAlive()) { S.ap.state = "precheck"; } else await sleep(2000);
+      } else if (st === "precheck") {
+        await apPrecheck(); S.ap.state = "engine";
+      } else if (st === "engine") {
+        apSet("Можно заводить");
+        const rpm = await readRpm();
+        if (rpm == null) S.ap.state = "ignition";
+        else if (rpm > 400) await apStartTrip();
+        else await sleep(700);
+      } else if (st === "after") {
+        // мотор заглушен; ждём, пока выключат зажигание или заведут снова
+        apSet("Поездка сохранена. Жду выключения зажигания");
+        const rpm = await readRpm();
+        if (rpm == null) S.ap.state = "ignition"; else if (rpm > 400) S.ap.state = "precheck"; else await sleep(2000);
+      } else if (st === "trip") {
+        await apTripTick(); await sleep(1000);
+      } else await sleep(500);
+    } catch (e) { log("Автопилот: " + e.message); await sleep(1000); }
+  }
+}
+async function apPrecheck() {
+  const sess = S.ap.sess = { started: new Date().toISOString(), auto: true };
+  let cfg = await kvGet("tcu");
+  say(cfg ? "Зажигание есть. Проверяю машину" : "Зажигание есть. Первая проверка с разведкой коробки, до минуты. Дождись сигнала");
+  apSet("Читаю адаптер, калибровку, ошибки");
+  sess.adapter = await readAdapter();
+  await readInfo(); await readDtc();
+  sess.dtcAtStart = { stored: S.info.dtcStored, pending: S.info.dtcPending };
+  sess.misfireAtStart = await readMisfire();
+  sess.freezeFrame = await readFreezeFrame();
+  sess.readiness = await readReadiness();
+  if (!cfg) { apSet("Разведка АКПП…"); cfg = await scanTcuAuto("7E1"); }
+  sess.tcu = cfg; sess.tcuSeries = [];
+  if (cfg.ids.length) { apSet("Холодный снимок АКПП"); sess.tcuSeries.push({ t: 0, coolant: S.vals.coolant ?? null, values: await readTcuValues(cfg) }); }
+  await setHeader("7E0");
+  const dtc = [S.info.dtcStored, S.info.dtcPending].filter(x => x && x !== "нет" && !/нет ответа/.test(x));
+  const tcuNote = cfg.protocol === "нет ответа" ? " Коробка на адресе 7E1 не отвечает." : cfg.protocol === "UDS" ? " Коробка на UDS, перебор сделаем вручную." : cfg.ids.length ? ` Параметров коробки: ${cfg.ids.length}.` : "";
+  say(`Проверка готова.${dtc.length ? " Есть ошибки: " + dtc.join(", ") + "." : " Ошибок нет."}${tcuNote} Можно заводить и ехать`, dtc.length ? "warn" : "ok");
+}
+async function apStartTrip() {
+  S.ap.state = "trip"; S.ap.lastFresh = performance.now(); S.ap.tcuT = performance.now(); S.ap.lastNews = performance.now(); S.ap.lowRpmSince = null;
+  if (S.rec) toggleRec();
+  toggleRec();
+  say("Мотор заведён. Запись пошла");
+}
+async function apTripTick() {
+  const now = performance.now();
+  if (!S.live && (S.connected || S.demo)) startLive();
+  if (now - S.ap.lastSave > 10000 && S.rec) { S.ap.lastSave = now; await kvSet("current", { sess: S.ap.sess, rows: S.rec, savedAt: new Date().toISOString() }); }
+  const minutes = S.rec?.length ? S.rec[S.rec.length - 1].t / 60 : 0;
+  apSet(`Запись · ${minutes.toFixed(1)} мин · ${S.rec?.length ?? 0} строк`);
+  if (now - S.ap.lastNews > 600000) { S.ap.lastNews = now; say(`Запись идёт, ${minutes.toFixed(0)} минут`, "tick"); }
+  const silent = now - (S.ap.lastFresh || now) > 10000;
+  const rpm = S.vals.rpm ?? 0;
+  if (rpm < 100) S.ap.lowRpmSince = S.ap.lowRpmSince ?? now; else S.ap.lowRpmSince = null;
+  if ((S.connected || S.demo) && (silent || (S.ap.lowRpmSince && now - S.ap.lowRpmSince > 5000))) await apEndTrip(silent ? "данные перестали приходить" : "");
+}
+async function apEndTrip(note) {
+  if (S.rec) toggleRec();
+  stopLive(); await sleep(200);
+  const sess = S.ap.sess || { started: new Date().toISOString() };
+  apSet("Мотор заглушен, сохраняю поездку");
+  if (await ecuAlive().catch(() => false)) {
+    await readDtc(); sess.dtcAtEnd = { stored: S.info.dtcStored, pending: S.info.dtcPending };
+    sess.misfireAtEnd = await readMisfire();
+  } else sess.dtcAtEnd = { stored: "не прочитаны: зажигание выключено", pending: "—" };
+  const rep = makeReport(sess, S.lastRows || [], note);
+  await saveReport(rep); await kvDel("current"); renderReports();
+  S.lastReport = rep.text;
+  say(`Поездка записана. Минут: ${rep.minutes.toFixed(0)}, разгонов: ${rep.pulls}. Отчёт сохранён`);
+  if (S.ap) { S.ap.state = "after"; S.ap.sess = null; }
+}
+// TCU values every 30 s during the trip, read inside the live loop so requests never overlap
+async function apTcuTick() {
+  if (!S.ap || S.ap.state !== "trip" || S.pullMode || !S.ap.sess?.tcu?.ids?.length) return;
+  const now = performance.now(); if (now - S.ap.tcuT < 30000) return;
+  S.ap.tcuT = now;
+  const t = S.rec?.length ? S.rec[S.rec.length - 1].t : 0;
+  S.ap.sess.tcuSeries.push({ t, coolant: S.vals.coolant ?? null, values: await readTcuValues(S.ap.sess.tcu) });
+}
+
+// ---------- saved reports ----------
+async function renderReports() {
+  const list = (await allReports()).sort((a, b) => b.id.localeCompare(a.id)).slice(0, 15);
+  $("reports").innerHTML = list.length ? list.map(r => `<div class="rep"><div><b>${r.id.slice(0, 16).replace("T", " ")}</b><span class="meta"> · ${r.summary}</span></div><div class="row"><button data-rep="${r.id}">Отправить</button><button data-del="${r.id}">Удалить</button></div></div>`).join("")
+    : `<p class="note">Пока пусто. Здесь появятся отчёты сессий и поездок автопилота.</p>`;
+}
+document.addEventListener("click", async e => {
+  const del = e.target?.dataset?.del;
+  if (del) { if (confirm("Удалить отчёт " + del.slice(0, 16).replace("T", " ") + "?")) { await dbDo("reports", "readwrite", s => s.delete(del)).catch(() => {}); renderReports(); } return; }
+  const id = e.target?.dataset?.rep; if (!id) return;
+  const r = (await allReports()).find(x => x.id === id); if (r) await shareFile(r.name, r.text, "text/plain");
+});
+async function recoverCrashed() {
+  const cur = await kvGet("current"); if (!cur?.rows?.length) return;
+  const rep = makeReport(cur.sess || { started: cur.savedAt }, cur.rows, "восстановлено после обрыва");
+  await saveReport(rep); await kvDel("current"); log("Восстановлена поездка после обрыва: " + rep.summary);
+}
+
+// ---------- autopilot demo: ignition, engine start and stop on a timeline ----------
+function startApDemo() {
+  unlockAudio(); S.demo = true; S.supported = new Set(ORDER); setStatus("демо-автопилот", "demo"); enable(true); renderGauges();
+  S.demoEng = { ign: false, run: false };
+  log("Демо автопилота: данные выдуманы. Зажигание через 3 с, мотор после проверки, поездка 40 с, потом мотор глушится.");
+  setTimeout(() => { if (S.demoEng) S.demoEng.ign = true; }, 3000);
+  const waitRun = setInterval(() => { if (S.ap?.state === "engine") { clearInterval(waitRun); setTimeout(() => { S.demoEng.run = true; setTimeout(() => { if (!S.demoEng) return; S.demoEng.run = false; setTimeout(() => { if (S.demoEng) S.demoEng.ign = false; }, 12000); }, 40000); }, 2500); } }, 300);
+  apStart();
+}
+
+// ---------- startup: подхватить знакомый адаптер без нажатий, восстановить оборванную поездку ----------
+async function boot() {
+  await recoverCrashed(); renderReports();
+  S.knownDev = await knownDevice();
+  if (S.knownDev && !S.connected && !S.demo) { log("Знакомый адаптер " + (S.knownDev.name || "") + ", подключаюсь сам"); tryAutoConnect(); }
+}
+async function apButton() {
+  unlockAudio();
+  if (S.ap) return;
+  if (S.session) { $("apInfo").textContent = "сначала заверши ручную сессию"; return; }
+  if (!S.connected && !S.demo) {
+    if (S.knownDev) { try { await connectDevice(S.knownDev); } catch (err) { log("Подключение: " + err.message); } }
+    if (!S.connected) await connect();
+    if (!S.connected) { $("apInfo").textContent = "адаптер не подключён"; return; }
+  }
+  apStart();
+}
+
 // ---------- wiring ----------
 $("btnConnect").onclick = connect;
 $("btnDemo").onclick = startDemo;
-$("btnDisconnect").onclick = () => { stopLive(); if (S.dev?.gatt?.connected) S.dev.gatt.disconnect(); S.demo = false; S.session = null; $("btnSession").textContent = "Начать сессию"; $("sessInfo").textContent = ""; enable(false); setStatus("не подключено"); };
+$("btnDisconnect").onclick = async () => { await apQuit(); stopLive(); if (S.dev?.gatt?.connected) S.dev.gatt.disconnect(); S.demo = false; S.session = null; $("btnSession").textContent = "Начать сессию"; $("sessInfo").textContent = ""; enable(false); setStatus("не подключено"); };
 $("btnLive").onclick = () => S.live ? stopLive() : startLive();
 $("btnRec").onclick = toggleRec;
 $("btnCsv").onclick = saveCsv;
@@ -792,7 +1129,14 @@ $("btnDiscStop").onclick = () => { S.discStop = true; };
 $("btnDiscSnap").onclick = discSnapshot;
 $("btnDiscSave").onclick = discSave;
 $("cmd").addEventListener("keydown", e => { if (e.key === "Enter") sendConsole(); });
+$("btnAp").onclick = apButton;
+$("btnApDemo").onclick = startApDemo;
+// выход из автопилота двойным нажатием, чтобы не выключить случайно
+$("btnApQuit").onclick = () => { const b = $("btnApQuit");
+  if (b.dataset.armed) { delete b.dataset.armed; b.textContent = "Выключить автопилот"; apQuit(); return; }
+  b.dataset.armed = "1"; b.textContent = "Нажми ещё раз, чтобы выключить"; setTimeout(() => { delete b.dataset.armed; b.textContent = "Выключить автопилот"; }, 3000); };
 renderGauges();
+boot();
 </script>
 </body>
 </html>
