@@ -52,8 +52,11 @@ section { background: var(--panel); border: 1px solid var(--line); border-radius
 .g.warn { border-color: var(--warn); } .g.warn .v { color: var(--warn); }
 .g.bad { border-color: var(--bad); } .g.bad .v { color: var(--bad); }
 .g.na .v { color: var(--muted); }
-.alerts { display: grid; gap: 6px; margin-top: 8px; }
-.alert { font-size: 13px; padding: 6px 10px; border-radius: 6px; border-left: 3px solid var(--warn); background: color-mix(in srgb, var(--warn) 12%, transparent); }
+/* фиксированная высота на 2 сообщения: появление предупреждений не двигает страницу */
+.alerts { display: grid; align-content: start; gap: 6px; margin-bottom: 10px; font-size: 13px; line-height: 1.45;
+  height: calc(2 * (3 * 1.45em + 12px) + 6px); overflow-y: auto; overscroll-behavior: contain; }
+.alert.none { color: var(--muted); border-left-color: var(--line); background: transparent; }
+.alert { padding: 6px 10px; border-radius: 6px; border-left: 3px solid var(--warn); background: color-mix(in srgb, var(--warn) 12%, transparent); }
 .alert.bad { border-left-color: var(--bad); background: color-mix(in srgb, var(--bad) 12%, transparent); }
 dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; margin: 0; font-size: 14px; }
 dt { color: var(--muted); } dd { margin: 0; font-family: var(--f-mono); word-break: break-all; }
@@ -98,8 +101,8 @@ input[type=text] { flex: 1; min-width: 0; font: 14px var(--f-mono); padding: 10p
 
   <section>
     <h2>Живые данные <span id="rate" class="meta"></span></h2>
+    <div class="alerts" id="alerts" aria-live="polite"><div class="alert none">Замечаний нет</div></div>
     <div class="gauges" id="gauges"></div>
-    <div class="alerts" id="alerts"></div>
     <div class="row" style="margin-top:10px">
       <button id="btnLive" disabled>Старт опроса</button>
       <button id="btnRec" class="rec" disabled>Запись лога</button>
@@ -200,7 +203,7 @@ const CSV_KEYS = ["t", "phase", "mode", ...ORDER.map(p => PIDS[p].k), "voltage"]
 const $ = id => document.getElementById(id);
 const S = { dev: null, rx: null, tx: null, buf: "", waiter: null, busy: Promise.resolve(),
   live: false, demo: false, supported: new Set(ORDER), vals: {}, rec: null, t0: 0,
-  hist: [], cycles: 0, rateT: 0, wake: null, logLines: [], info: {}, session: null };
+  hist: [], cycles: 0, rateT: 0, wake: null, logLines: [], info: {}, session: null, alertHold: {}, alertSeq: 0, alertHtml: "" };
 
 function log(s) { S.logLines.push(new Date().toISOString().slice(11, 23) + " " + s); if (S.logLines.length > 400) S.logLines.shift(); const el = $("log"); el.textContent = (el.textContent + s + "\n").slice(-6000); el.scrollTop = el.scrollHeight; }
 function setStatus(txt, cls) { const el = $("status"); el.textContent = txt; el.className = "status " + (cls || ""); }
@@ -354,7 +357,12 @@ function renderAlerts() {
       if (max - last >= 3) a.push(["bad", `Провал угла ${(max - last).toFixed(1)}° за доли секунды: возможен откат по детонации.`]); }
   }
   ["ltft1", "ltft2"].forEach(k => { if (Math.abs(v[k] ?? 0) > 10) a.push(["warn", `Долгосрочная коррекция ${PIDS[k === "ltft1" ? 7 : 9].label}: ${v[k].toFixed(1)}%. Больше ±10% значит, что модель воздуха не совпадает с мотором.`]); });
-  $("alerts").innerHTML = a.map(([c, t]) => `<div class="alert ${c === "bad" ? "bad" : ""}">${t}</div>`).join("");
+  // каждое предупреждение держится 3 с после последнего срабатывания, чтобы не мигать
+  const now = performance.now();
+  a.forEach(([c, t], i) => { const key = c + ":" + t.replace(/[-\d.]+/g, ""); S.alertHold[key] = { c, t, until: now + 3000, order: S.alertHold[key]?.order ?? S.alertSeq++ }; });
+  const live = Object.entries(S.alertHold).filter(([k, x]) => x.until > now || delete S.alertHold[k] && false).map(([, x]) => x).sort((x, y) => x.order - y.order);
+  const html = live.length ? live.map(x => `<div class="alert ${x.c === "bad" ? "bad" : ""}">${x.t}</div>`).join("") : `<div class="alert none">Замечаний нет</div>`;
+  if (html !== S.alertHtml) { $("alerts").innerHTML = html; S.alertHtml = html; }
 }
 function gaugeClass(k, x) {
   if (x == null) return "na";
