@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>M276 Сканер</title>
+<title>Автометр 2.0</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500&display=swap">
 <style>
@@ -61,6 +61,7 @@ section { background: var(--panel); border: 1px solid var(--line); border-radius
 dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; margin: 0; font-size: 14px; }
 dt { color: var(--muted); } dd { margin: 0; font-family: var(--f-mono); word-break: break-all; }
 .meta { font: 400 12px var(--f-mono); color: var(--muted); }
+a { color: var(--accent); }
 pre { font: 400 12px/1.4 var(--f-mono); max-height: 220px; overflow: auto; margin: 0; white-space: pre-wrap; word-break: break-all; color: var(--muted); }
 select { font: 14px var(--f-body); padding: 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); min-height: 44px; max-width: 100%; }
 input[type=text] { flex: 1; min-width: 0; font: 14px var(--f-mono); padding: 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); min-height: 44px; }
@@ -74,6 +75,16 @@ input[type=text] { flex: 1; min-width: 0; font: 14px var(--f-mono); padding: 10p
 .mis th { font: 500 11px var(--f-mono); color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
 .mis tr.hot td { color: var(--warn); }
 .session .note { margin: 0; }
+.mis td input { min-width: 22px; min-height: 22px; margin: 0; }
+.scnout .hit { border-top: 1px solid var(--line); padding: 10px 0; }
+.scnout .hit h4 { font: 600 14px var(--f-mono); margin: 0 0 6px; }
+.scnout .br { display: grid; grid-template-columns: 7.5em 1fr 8.5em; gap: 8px; align-items: center; font: 12px var(--f-mono); font-variant-numeric: tabular-nums; }
+.scnout .br + .br { margin-top: 4px; }
+.scnout .br.ref { color: var(--accent); }
+.scnout svg { width: 100%; height: 34px; display: block; }
+.scnout svg polyline { fill: none; stroke: currentColor; stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.scnout svg line { stroke: var(--line); stroke-width: 1; vector-effect: non-scaling-stroke; }
+@media (max-width: 480px) { .scnout .br { grid-template-columns: 6em 1fr; } .scnout .br .mm { grid-column: 2; } }
 .scen { display: grid; gap: 12px; }
 .scen > div { border-top: 1px solid var(--line); padding-top: 10px; }
 .scen > div:first-child { border-top: 0; padding-top: 0; }
@@ -95,7 +106,7 @@ input[type=text] { flex: 1; min-width: 0; font: 14px var(--f-mono); padding: 10p
 <body>
 <div class="wrap">
   <header>
-    <h1>M276 Сканер<small>C 300 4MATIC · OBD BLE · v0.5</small></h1>
+    <h1>Автометр 2.0<small>C 300 4MATIC · M276 · OBD BLE</small></h1>
     <span id="status" class="status">не подключено</span>
   </header>
 
@@ -127,8 +138,8 @@ input[type=text] { flex: 1; min-width: 0; font: 14px var(--f-mono); padding: 10p
         </div>
       </div>
       <div>
-        <h3>Разведка блоков</h3>
-        <p class="note">Поиск скрытых параметров, например температуры масла АКПП. Отдельный блок ниже. Автопилот делает её сам при первой проверке.</p>
+        <h3>Поиск скрытых параметров</h3>
+        <p class="note">Ищем то, чего нет в стандартном OBD: температуру масла АКПП, обороты турбины, детонацию. Раздел <a href="#find">«Поиск скрытых параметров»</a> ниже: найти, записать сценарий, посмотреть, какие байты двигаются вместе с машиной. Автопилот ищет параметры АКПП сам при первой проверке.</p>
       </div>
     </div>
   </section>
@@ -172,8 +183,9 @@ input[type=text] { flex: 1; min-width: 0; font: 14px var(--f-mono); padding: 10p
   </section>
 
   <section>
-    <h2>Разведка блоков</h2>
+    <h2 id="find">Поиск скрытых параметров</h2>
     <p class="note">Ищем параметры, которых нет в стандартном OBD, например температуру масла АКПП. Делай на стоящей машине: зажигание включено или мотор на холостых. Отправляются только запросы чтения.</p>
+    <p class="note">Порядок: 1 → 2 (или 3) найдут, на какие запросы блок отвечает. Потом «Запись сценария» ниже покажет, какие байты в ответах меняются вместе с оборотами, педалью или прогревом.</p>
     <div class="row" style="margin:8px 0">
       <select id="discTarget" aria-label="Блок">
         <option value="7E1">АКПП, адрес 7E1 (стандарт OBD, проверим)</option>
@@ -199,6 +211,18 @@ input[type=text] { flex: 1; min-width: 0; font: 14px var(--f-mono); padding: 10p
     </div>
     <p id="discProg" class="meta"></p>
     <div id="discOut" class="mis"></div>
+
+    <h3 style="margin:18px 0 4px">4. Запись сценария</h3>
+    <p class="note">Сканер по кругу читает отмеченные галочками ответы и заодно обороты, педаль и температуру ОЖ из стандартного OBD. Голос подсказывает, что делать. После записи под каждым ответом видно, какие байты менялись и как: график байта рядом с графиком оборотов. Если байт повторяет обороты или педаль, это и есть кандидат. Машина стоит, передача P.</p>
+    <div class="row" style="margin:8px 0">
+      <select id="scnPick" aria-label="Сценарий"></select>
+      <button id="btnScn" class="rec" disabled>Записать сценарий</button>
+      <button id="btnScnStop" disabled>Стоп</button>
+      <button id="btnScnSave" disabled>Сохранить запись</button>
+    </div>
+    <p id="scnSteps" class="note"></p>
+    <p id="scnProg" class="meta"></p>
+    <div id="scnOut" class="scnout"></div>
   </section>
 
   <section>
@@ -228,7 +252,7 @@ input[type=text] { flex: 1; min-width: 0; font: 14px var(--f-mono); padding: 10p
 
 <script>
 "use strict";
-const APP = "v0.5";
+const APP = "2.0";
 // ---------- PID table: bytes, decode, label, unit ----------
 const PIDS = {
   0x04: { n: 1, f: b => b[0] * 100 / 255, k: "load", label: "Нагрузка", unit: "%", d: 0 },
@@ -262,7 +286,7 @@ const S = { dev: null, rx: null, tx: null, buf: "", waiter: null, busy: Promise.
 function log(s) { S.logLines.push(new Date().toISOString().slice(11, 23) + " " + s); if (S.logLines.length > 400) S.logLines.shift(); const el = $("log"); el.textContent = (el.textContent + s + "\n").slice(-6000); el.scrollTop = el.scrollHeight; }
 function setStatus(txt, cls) { const el = $("status"); el.textContent = txt; el.className = "status " + (cls || ""); }
 function enable(on) { ["btnLive", "btnRec", "btnInfo", "btnDtc", "btnMis", "btnFF", "btnRdy", "btnDiscId", "btnDiscKwp", "btnDiscUds", "btnSend", "btnDisconnect", "btnSession"].forEach(id => $(id).disabled = !on);
-  $("btnConnect").disabled = on; $("btnDemo").disabled = on; $("btnApDemo").disabled = on || !!S.ap; }
+  $("btnConnect").disabled = on; $("btnDemo").disabled = on; $("btnApDemo").disabled = on || !!S.ap; S.on = on; scnEnable(); }
 
 // ---------- BLE transport: любой BLE-адаптер ELM327 ----------
 // Известные BLE-каналы адаптеров. Сервис ищется по порядку, характеристики выбираются по свойствам (notify / write).
@@ -510,7 +534,7 @@ function buildReportText(r, rows) {
   const total = {}; segs.forEach(s => total[s.phase] = (total[s.phase] || 0) + (s.end - s.start));
   const pulls = segs.filter(s => s.phase === "разгон" && s.end - s.start >= 1);
   const L = [];
-  L.push("M276 СКАНЕР · ОТЧЁТ СЕССИИ" + (r.demo ? " · ДЕМО (данные выдуманы)" : ""));
+  L.push("АВТОМЕТР 2.0 · ОТЧЁТ СЕССИИ" + (r.demo ? " · ДЕМО (данные выдуманы)" : ""));
   L.push("=".repeat(44));
   L.push(`Машина:      ${r.car}`, `Начало:      ${r.started}`, `Конец:       ${r.finished}`, `Версия:      сканер ${r.app}`, `Режим:       ${r.auto ? "автопилот" : "ручная сессия"}`);
   if (r.note) L.push(`Примечание:  ${r.note}`);
@@ -626,7 +650,7 @@ function rdyText(r) { if (!r) return "  не читалась"; if (r.mil == nul
 
 // ---------- discovery: find non-standard parameters (KWP 21 / UDS 22), read-only ----------
 const hex4 = n => n.toString(16).toUpperCase().padStart(4, "0");
-S.disc = { target: null, ident: [], hits: [], snaps: [] }; S.hdr = "7E0"; S.discStop = false;
+S.disc = { target: null, ident: [], hits: [], snaps: [], off: new Set() }; S.hdr = "7E0"; S.discStop = false;
 function discTarget() { const c = $("discCustom").value.trim().toUpperCase(); return /^[0-7][0-9A-F]{2}$/.test(c) ? c : $("discTarget").value; }
 async function setHeader(h) { if (S.hdr !== h) { await cmd("ATSH" + h); S.hdr = h; } }
 function discBusy(on) { ["btnDiscId", "btnDiscKwp", "btnDiscUds", "btnDiscSnap", "btnDiscSave"].forEach(id => $(id).disabled = on); $("btnDiscStop").disabled = !on; }
@@ -634,7 +658,7 @@ async function discPrepare() {
   const t = discTarget();
   if (S.live) stopLive();
   await sleep(150);
-  if (S.disc.target !== t) S.disc = { target: t, ident: [], hits: [], snaps: [] };
+  if (S.disc.target !== t) { S.disc = { target: t, ident: [], hits: [], snaps: [], off: new Set() }; S.scn = null; renderScn(); }
   await setHeader(t);
   return t;
 }
@@ -702,23 +726,128 @@ function renderDisc() {
   const d = S.disc, el = $("discOut");
   if (!d.hits.length && !d.ident.length) { el.innerHTML = ""; return; }
   const head = d.ident.length ? `<p class="note">Опознание ${d.target}: ` + d.ident.map(x => `${x.q} ${x.kind === "ok" ? "✓" : x.kind === "отказ" ? "✗" + x.nrc : "—"}`).join(" · ") + "</p>" : "";
-  el.innerHTML = head + (d.hits.length ? `<table><tr><th>Запрос</th><th>Ответ</th>${d.snaps.map(s => `<th>${s.label}</th>`).join("")}</tr>` +
-    d.hits.map(h => `<tr class="${changed(h.q) ? "hot" : ""}"><td>${h.q}</td><td>${h.data.slice(0, 24)}${h.data.length > 24 ? "…" : ""}</td>${d.snaps.map(s => `<td>${(s.values[h.q] || "").slice(0, 24)}</td>`).join("")}</tr>`).join("") +
-    "</table><p class=\"note\">Подсвечены значения, которые изменились между снимками. Среди них ищем температуру масла.</p>" : "");
+  el.innerHTML = head + (d.hits.length ? `<table><tr><th title="читать в сценарии">✓</th><th>Запрос</th><th>Ответ</th>${d.snaps.map(s => `<th>${s.label}</th>`).join("")}</tr>` +
+    d.hits.map(h => `<tr class="${changed(h.q) ? "hot" : ""}"><td><input type="checkbox" data-scnq="${h.q}" ${d.off?.has(h.q) ? "" : "checked"} aria-label="читать ${h.q} в сценарии"></td><td>${h.q}</td><td>${h.data.slice(0, 24)}${h.data.length > 24 ? "…" : ""}</td>${d.snaps.map(s => `<td>${(s.values[h.q] || "").slice(0, 24)}</td>`).join("")}</tr>`).join("") +
+    "</table><p class=\"note\">Подсвечены значения, которые изменились между снимками. Галочка: читать этот ответ в записи сценария.</p>" : "");
+  scnEnable();
 }
 function discText() {
   const d = S.disc, L = [];
-  L.push("M276 СКАНЕР · РАЗВЕДКА БЛОКА " + d.target + (S.demo ? " · ДЕМО (данные выдуманы)" : ""), "=".repeat(44), "Протокол: " + (d.protocol || "не определён"), "");
+  L.push("АВТОМЕТР 2.0 · ПОИСК ПАРАМЕТРОВ · БЛОК " + d.target + (S.demo ? " · ДЕМО (данные выдуманы)" : ""), "=".repeat(44), "Протокол: " + (d.protocol || "не определён"), "");
   L.push("ОПОЗНАНИЕ"); d.ident.forEach(x => L.push(`  ${x.q.padEnd(7)} ${x.kind}${x.nrc ? " NRC " + x.nrc : ""}${x.data ? " " + x.data : ""}`)); L.push("");
   L.push("СНИМКИ"); d.snaps.forEach((s, i) => L.push(`  ${i + 1}. ${s.label} · ${s.time} · ОЖ мотора ${s.coolant ?? "—"} °C`)); L.push("");
   L.push("НАЙДЕННЫЕ ПАРАМЕТРЫ (* = менялся между снимками)");
   d.hits.forEach(h => { L.push(`${changed(h.q) ? "*" : " "} ${h.q}  перебор: ${h.data}`); d.snaps.forEach(s => L.push(`      ${s.label}: ${s.values[h.q] ?? "—"}`)); });
+  if (S.scn?.rows.length) { L.push("", "ЗАПИСЬ СЦЕНАРИЯ (подробно в CSV)"); L.push(...scnSummary().map(x => "  " + x)); }
   L.push("", "КОНСОЛЬ"); S.logLines.forEach(c => L.push("  " + c));
   return L.join("\n");
 }
 async function discSave() {
   const name = "m276_discovery_" + S.disc.target + "_" + new Date().toISOString().replace(/[:T]/g, "-").slice(0, 19) + ".txt";
   await shareFile(name, discText(), "text/plain");
+}
+
+// ---------- scenario recording: read chosen answers in a loop next to rpm/pedal/coolant, then show each byte as a graph ----------
+const SCN = [
+  { id: "rev", name: "Перегазовка на месте (45 с)", dur: 45, steps: [[0, "Передача P, мотор на холостых. Педаль не трогай."], [10, "Плавно подними обороты до трёх тысяч и держи."], [22, "Отпусти педаль."], [30, "Коротко газ до четырёх тысяч и отпусти."], [38, "Холостые, не трогай педаль."]] },
+  { id: "warm", name: "Прогрев на холостых (10 мин)", dur: 600, steps: [[0, "Заведи холодный мотор и не трогай педаль. Запись десять минут."], [300, "Половина прогрева, продолжаем."]] },
+  { id: "ign", name: "Зажигание без запуска (20 с)", dur: 20, steps: [[0, "Зажигание включено, мотор не заводи."], [8, "Нажми педаль газа до упора и держи."], [15, "Отпусти педаль."]] },
+  { id: "free", name: "Свободная запись (до 5 мин, стоп вручную)", dur: 300, steps: [[0, "Запись идёт. Остановишь кнопкой Стоп."]] },
+];
+const SCN_REF = [0x0C, 0x11, 0x05, 0x0D];
+S.scn = null; S.scnStop = false;
+function scnEnable() {
+  const on = !!S.on && !S.scnRun, sel = scnQs();
+  $("btnScn").disabled = !on || !sel.length; $("btnScnSave").disabled = !S.scn?.rows.length || !!S.scnRun; $("btnScnStop").disabled = !S.scnRun;
+  if (!S.scnRun) $("scnProg").textContent = !S.disc.hits.length ? "Сначала найди ответы перебором (шаги 1–3)." : sel.length ? `К записи отмечено ответов: ${sel.length}.` : "Отметь галочками ответы для записи.";
+}
+function scnQs() { return S.disc.hits.map(h => h.q).filter(q => !S.disc.off?.has(q)); }
+function scnShowSteps() { const sc = SCN.find(x => x.id === $("scnPick").value); $("scnSteps").textContent = sc.steps.map(([t, txt]) => `${t} с: ${txt}`).join(" · "); }
+async function scnRecord() {
+  const sc = SCN.find(x => x.id === $("scnPick").value), qs = scnQs(); if (!qs.length) return;
+  if (S.live) stopLive();
+  unlockAudio();
+  S.scnRun = true; S.scnStop = false; discBusy(true); $("btnScn").classList.add("active"); scnEnable();
+  const t = S.disc.target;
+  S.scn = { name: sc.name, target: t, qs, rows: [], marks: [], started: new Date().toISOString() }; renderScn();
+  try { S.wake = await navigator.wakeLock?.request("screen"); } catch (e) {}
+  const t0 = performance.now(); let si = 0, step = "";
+  try {
+    while (!S.scnStop) {
+      const el = (performance.now() - t0) / 1000;
+      if (el >= sc.dur) break;
+      while (si < sc.steps.length && el >= sc.steps[si][0]) { step = sc.steps[si][1]; S.scn.marks.push({ t: el, label: step }); say(step); si++; }
+      const row = { t: +el.toFixed(2), step: S.scn.marks.length, ref: {}, raw: {} };
+      await setHeader("7E0");
+      try { const f = await poll(SCN_REF); for (const p of SCN_REF) row.ref[PIDS[p].k] = f[PIDS[p].k] ?? null; } catch (e) {}
+      await setHeader(t);
+      for (const q of qs) { if (S.scnStop) break;
+        const r = classify(parseHex(await cmd(q, 1500).catch(() => "")), parseInt(q.slice(0, 2), 16));
+        row.raw[q] = r.kind === "ok" ? r.data : ""; }
+      S.scn.rows.push(row);
+      const n = S.scn.rows.length;
+      $("scnProg").textContent = `Запись: ${Math.floor(el)} из ${sc.dur} с · замеров ${n} · ${(n / Math.max(el, 0.1)).toFixed(1)} в секунду · ${step}`;
+      if (n % 10 === 0) renderScn();
+      if (S.demo) await sleep(200);
+    }
+    say(S.scnStop ? "Запись остановлена." : "Запись закончена. Смотри графики на экране.");
+  } catch (e) { log("Сценарий: " + e.message); }
+  try { S.wake?.release(); } catch (e) {} S.wake = null;
+  S.scnRun = false; discBusy(false); $("btnScn").classList.remove("active");
+  const n = S.scn.rows.length, el = n ? S.scn.rows[n - 1].t : 0;
+  renderScn(); scnEnable();
+  $("scnProg").textContent = `Записано ${n} замеров за ${Math.round(el)} с (${(n / Math.max(el, 0.1)).toFixed(1)} в секунду). Ниже только байты, которые менялись.`;
+}
+// bytes of the answer after the echo (61 xx for KWP, 62 xxxx for UDS)
+function scnBytes(q, hex) { if (!hex) return null; const skip = q.startsWith("21") ? 2 : 3, b = hex.match(/../g).map(h => parseInt(h, 16)); return b.slice(skip); }
+function scnSeries(q) {
+  const rows = S.scn.rows, arr = rows.map(r => scnBytes(q, r.raw[q])), len = Math.max(0, ...arr.map(a => a?.length || 0)), out = [];
+  for (let i = 0; i < len; i++) {
+    const v = arr.map(a => a && a.length > i ? a[i] : null), nn = v.filter(x => x != null);
+    if (nn.length < 2 || Math.min(...nn) === Math.max(...nn)) continue;
+    out.push({ label: `байт ${i + 1}`, v, i });
+    const w = arr.map(a => a && a.length > i + 1 ? a[i] * 256 + a[i + 1] : null), wn = w.filter(x => x != null);
+    // 16-битное число: старший байт меняется медленно, младший быстро
+    if (i + 1 < len && new Set(nn).size < new Set(arr.map(a => a?.[i + 1]).filter(x => x != null)).size && Math.min(...wn) !== Math.max(...wn)) out.push({ label: `байты ${i + 1}–${i + 2}`, v: w, i, word: true });
+  }
+  return out;
+}
+function spark(v, marks, rows) {
+  const nn = v.filter(x => x != null); if (!nn.length) return "<svg></svg>";
+  const lo = Math.min(...nn), hi = Math.max(...nn), tMax = rows[rows.length - 1].t || 1;
+  const pts = v.map((x, k) => x == null ? null : `${(rows[k].t / tMax * 300).toFixed(1)},${(30 - (hi === lo ? 0.5 : (x - lo) / (hi - lo)) * 28 + 1).toFixed(1)}`).filter(Boolean).join(" ");
+  const ml = marks.slice(1).map(m => `<line x1="${(m.t / tMax * 300).toFixed(1)}" y1="0" x2="${(m.t / tMax * 300).toFixed(1)}" y2="32"/>`).join("");
+  return `<svg viewBox="0 0 300 32" preserveAspectRatio="none" aria-hidden="true">${ml}<polyline points="${pts}"/></svg>`;
+}
+function mm(v, d = 0) { const nn = v.filter(x => x != null); return nn.length ? `${(+Math.min(...nn).toFixed(d))}…${(+Math.max(...nn).toFixed(d))}` : "—"; }
+function renderScn() {
+  const el = $("scnOut"), sc = S.scn;
+  if (!sc?.rows.length) { el.innerHTML = ""; return; }
+  const rows = sc.rows, ref = [["rpm", "Обороты", 0], ["throttle", "Педаль/дросс.", 0], ["coolant", "ОЖ °C", 0]];
+  const refHtml = ref.map(([k, n, d]) => { const v = rows.map(r => r.ref[k]); return `<div class="br ref"><span>${n}</span>${spark(v, sc.marks, rows)}<span class="mm">${mm(v, d)}</span></div>`; }).join("");
+  const hits = sc.qs.map(q => {
+    const ser = scnSeries(q), miss = rows.filter(r => !r.raw[q]).length;
+    const body = ser.length ? ser.map(s => `<div class="br"><span>${s.label}</span>${spark(s.v, sc.marks, rows)}<span class="mm">${mm(s.v)}${s.word ? "" : " · " + hex2(Math.min(...s.v.filter(x => x != null))) + "…" + hex2(Math.max(...s.v.filter(x => x != null)))}</span></div>`).join("")
+      : `<p class="meta">Ни один байт не менялся${miss ? `, без ответа ${miss} раз` : ""}.</p>`;
+    return `<div class="hit"><h4>${q}${miss && ser.length ? ` <span class="meta">без ответа ${miss} из ${rows.length}</span>` : ""}</h4>${refHtml}${body}</div>`;
+  });
+  const moving = sc.qs.filter(q => scnSeries(q).length);
+  el.innerHTML = `<p class="note">Голубым: обороты, педаль и ОЖ для сравнения. Вертикальные черты: смена шага сценария. Справа: от и до (десятичное · hex). Менялись ответы: ${moving.length} из ${sc.qs.length}.</p>` +
+    hits.filter((h, k) => scnSeries(sc.qs[k]).length).join("") +
+    (moving.length < sc.qs.length ? `<p class="meta">Без изменений: ${sc.qs.filter(q => !moving.includes(q)).join(", ")}</p>` : "");
+}
+function scnSummary() {
+  const sc = S.scn, L = [`${sc.name} · блок ${sc.target} · ${sc.started} · замеров ${sc.rows.length}`];
+  sc.marks.forEach(m => L.push(`шаг ${m.t.toFixed(0)} с: ${m.label}`));
+  sc.qs.forEach(q => { const ser = scnSeries(q); L.push(`${q}: ` + (ser.length ? ser.map(s => `${s.label} ${mm(s.v)}`).join("; ") : "не менялся")); });
+  return L;
+}
+async function scnSave() {
+  const sc = S.scn; if (!sc?.rows.length) return;
+  const head = ["t", "step", "rpm", "throttle", "coolant", "speed", ...sc.qs];
+  const L = ["# АВТОМЕТР 2.0 · ЗАПИСЬ СЦЕНАРИЯ" + (S.demo ? " · ДЕМО (данные выдуманы)" : ""), ...scnSummary().map(x => "# " + x), head.join(",")];
+  sc.rows.forEach(r => L.push([r.t, r.step, ...["rpm", "throttle", "coolant", "speed"].map(k => r.ref[k] == null ? "" : +(+r.ref[k]).toFixed(1)), ...sc.qs.map(q => r.raw[q] || "")].join(",")));
+  await shareFile("m276_scenario_" + sc.target + "_" + sc.started.replace(/[:T]/g, "-").slice(0, 19) + ".csv", L.join("\n"), "text/csv");
 }
 
 // ---------- one-button session: everything Claude needs in one file ----------
@@ -777,8 +906,8 @@ async function sendConsole() {
 
 // ---------- demo: simulated pulls so the page can be tried before the adapter arrives ----------
 let demoT = 0;
-function demoState() {
-  demoT += 0.08; const cyc = demoT % 14, pull = cyc > 6 && cyc < 11, p = pull ? (cyc - 6) / 5 : 0;
+function demoState(adv = true) {
+  if (adv) demoT += 0.08; const cyc = demoT % 14, pull = cyc > 6 && cyc < 11, p = pull ? (cyc - 6) / 5 : 0;
   const rpm = pull ? 2200 + p * 4400 : 800 + 20 * Math.sin(demoT * 3), thr = pull ? 100 : cyc < 6 ? 0 : 12;
   const knock = pull && p > 0.7 && p < 0.78;
   return { rpm, speed: pull ? 40 + p * 75 : 40 + cyc, thr, load: pull ? 92 : 22, timing: pull ? 24 + p * 8 - (knock ? 5 : 0) : 12,
@@ -816,7 +945,14 @@ function demoReply(c) {
   if (c === "0101") return "410100076101";
   if (c === "020200") return "4202000000";
   if (c.startsWith("22")) return c === "22F190" ? "7F2231" : "7F2231";
+  if (c === "1A86") return "5A86A0352703";
   if (/^1A/.test(c)) return "7F1A11";
+  if (/^21[0-9A-F]{2}$/.test(c)) { const id = parseInt(c.slice(2), 16), s = demoState(false), rw = Math.round(s.rpm);
+    if (id === 0x01) return "6101" + hex2(rw >> 8) + hex2(rw & 255) + hex2(Math.round(s.thr * 2.55)) + "00" + hex2(s.cool + 40) + "7F";
+    if (id === 0x05) return "6105" + hex2(Math.round((s.timing + 20) * 2)) + hex2(s.timing < 24 + 8 * 0.7 && s.thr > 90 && s.rpm > 5200 ? 10 : 0) + "0000";
+    if (id === 0x12) return "6112" + hex2(60 + Math.min(40, Math.floor(demoT))) + "33";
+    if (id === 0x20) return "6120" + "A0B0C0D0";
+    return "7F2112"; }
   if (c.startsWith("01")) { const s = demoState(); if (S.demoEng && !S.demoEng.run) Object.assign(s, { rpm: 0, speed: 0, thr: 0, load: 0, maf: 0, timing: 0 }); const pids = c.slice(2).match(/../g).map(h => parseInt(h, 16));
     return "41" + pids.map(p => hex2(p) + (demoByte(p, s) || []).map(hex2).join("")).join(""); }
   if (c === "0902") return "014\r0:490201574444\r1:32303430303030\r2:41303030303030";
@@ -907,7 +1043,7 @@ async function connectDevice(dev) {
 function onDisconnect() {
   S.connected = false; setStatus("связь потеряна", "");
   if (S.waiter) { const w = S.waiter; S.waiter = null; w(""); }
-  stopLive();
+  stopLive(); S.scnStop = true;
   if (S.ap) sayOnce("lost", "Связь с адаптером потеряна. Переподключаюсь", "bad", 15000); else enable(false);
 }
 async function knownDevice() {
@@ -1155,6 +1291,12 @@ $("btnDiscUds").onclick = () => discScan(0x22);
 $("btnDiscStop").onclick = () => { S.discStop = true; };
 $("btnDiscSnap").onclick = discSnapshot;
 $("btnDiscSave").onclick = discSave;
+$("scnPick").innerHTML = SCN.map(x => `<option value="${x.id}">${x.name}</option>`).join(""); scnShowSteps();
+$("scnPick").onchange = scnShowSteps;
+$("btnScn").onclick = scnRecord;
+$("btnScnStop").onclick = () => { S.scnStop = true; };
+$("btnScnSave").onclick = scnSave; scnEnable();
+$("discOut").addEventListener("change", e => { const q = e.target?.dataset?.scnq; if (!q) return; if (e.target.checked) S.disc.off.delete(q); else S.disc.off.add(q); scnEnable(); });
 $("cmd").addEventListener("keydown", e => { if (e.key === "Enter") sendConsole(); });
 $("btnAp").onclick = apButton;
 $("btnApDemo").onclick = startApDemo;
