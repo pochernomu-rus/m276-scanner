@@ -1,0 +1,387 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>M276 Сканер</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500&display=swap">
+<style>
+/* Layout: one column, приборная панель сверху, служебные блоки ниже. Тёмная по умолчанию (ночь, салон). */
+:root {
+  --bg: #101214; --panel: #181b1f; --line: #2a2f35; --fg: #e6e8ea; --muted: #8b939c;
+  --accent: #4fb3c8; --ok: #5cc28a; --warn: #e3b341; --bad: #e5644f;
+  --f-display: "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif;
+  --f-body: "IBM Plex Sans", system-ui, -apple-system, sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) {
+  --bg: #f3f5f6; --panel: #ffffff; --line: #d6dbe0; --fg: #15191d; --muted: #5d6670;
+  --accent: #1f7f93; --ok: #2e8a57; --warn: #a87400; --bad: #c23a26; color-scheme: light; } }
+:root[data-theme="light"] {
+  --bg: #f3f5f6; --panel: #ffffff; --line: #d6dbe0; --fg: #15191d; --muted: #5d6670;
+  --accent: #1f7f93; --ok: #2e8a57; --warn: #a87400; --bad: #c23a26; color-scheme: light; }
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--bg); color: var(--fg); font: 15px/1.45 var(--f-body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: calc(12px + env(safe-area-inset-top, 0px)) calc(24px + env(safe-area-inset-bottom, 0px)); }
+.wrap { max-width: 760px; margin: 0 auto; display: grid; gap: 14px; }
+header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+h1 { font: 600 22px/1.1 var(--f-display); letter-spacing: .02em; margin: 0; }
+h1 small { display: block; font: 400 12px var(--f-mono); color: var(--muted); letter-spacing: 0; margin-top: 3px; }
+h2 { font: 600 13px var(--f-display); text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0 0 8px; }
+.status { font: 500 12px var(--f-mono); padding: 4px 10px; border-radius: 99px; border: 1px solid var(--line); color: var(--muted); }
+.status.on { color: var(--ok); border-color: var(--ok); }
+.status.demo { color: var(--warn); border-color: var(--warn); }
+.row { display: flex; gap: 8px; flex-wrap: wrap; }
+button { font: 500 14px var(--f-body); color: var(--fg); background: var(--panel); border: 1px solid var(--line);
+  border-radius: 8px; padding: 10px 14px; min-height: 44px; cursor: pointer; }
+button.primary { background: var(--accent); color: var(--bg); border-color: var(--accent); }
+button.rec { border-color: var(--bad); color: var(--bad); }
+button.rec.active { background: var(--bad); color: var(--bg); }
+button:disabled { opacity: .45; cursor: default; }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; min-width: 0; }
+.gauges { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+.g { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; display: grid; gap: 2px; }
+.g .k { font: 500 11px var(--f-mono); color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+.g .v { font: 600 26px/1.1 var(--f-display); font-variant-numeric: tabular-nums; }
+.g .v small { font: 400 12px var(--f-mono); color: var(--muted); margin-left: 4px; }
+.g.warn { border-color: var(--warn); } .g.warn .v { color: var(--warn); }
+.g.bad { border-color: var(--bad); } .g.bad .v { color: var(--bad); }
+.g.na .v { color: var(--muted); }
+.alerts { display: grid; gap: 6px; margin-top: 8px; }
+.alert { font-size: 13px; padding: 6px 10px; border-radius: 6px; border-left: 3px solid var(--warn); background: color-mix(in srgb, var(--warn) 12%, transparent); }
+.alert.bad { border-left-color: var(--bad); background: color-mix(in srgb, var(--bad) 12%, transparent); }
+dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; margin: 0; font-size: 14px; }
+dt { color: var(--muted); } dd { margin: 0; font-family: var(--f-mono); word-break: break-all; }
+.meta { font: 400 12px var(--f-mono); color: var(--muted); }
+pre { font: 400 12px/1.4 var(--f-mono); max-height: 220px; overflow: auto; margin: 0; white-space: pre-wrap; word-break: break-all; color: var(--muted); }
+input[type=text] { flex: 1; min-width: 0; font: 14px var(--f-mono); padding: 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); min-height: 44px; }
+.note { font-size: 13px; color: var(--muted); max-width: 65ch; }
+.dtc { font-family: var(--f-mono); }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>M276 Сканер<small>C 300 4MATIC · OBDLink CX · v0.1</small></h1>
+    <span id="status" class="status">не подключено</span>
+  </header>
+
+  <div class="row">
+    <button id="btnConnect" class="primary">Подключить OBDLink</button>
+    <button id="btnDemo">Демо без машины</button>
+    <button id="btnDisconnect" disabled>Отключить</button>
+  </div>
+
+  <section>
+    <h2>Живые данные <span id="rate" class="meta"></span></h2>
+    <div class="gauges" id="gauges"></div>
+    <div class="alerts" id="alerts"></div>
+    <div class="row" style="margin-top:10px">
+      <button id="btnLive" disabled>Старт опроса</button>
+      <button id="btnRec" class="rec" disabled>Запись лога</button>
+      <button id="btnCsv" disabled>Сохранить CSV</button>
+      <span id="recInfo" class="meta" style="align-self:center"></span>
+    </div>
+  </section>
+
+  <section>
+    <h2>Прошивка и ошибки</h2>
+    <div class="row" style="margin-bottom:10px">
+      <button id="btnInfo" disabled>Прочитать VIN и калибровку</button>
+      <button id="btnDtc" disabled>Прочитать ошибки</button>
+    </div>
+    <dl id="info">
+      <dt>VIN</dt><dd id="iVin">—</dd>
+      <dt>Calibration ID</dt><dd id="iCal">—</dd>
+      <dt>CVN</dt><dd id="iCvn">—</dd>
+      <dt>Ошибки</dt><dd id="iDtc">—</dd>
+      <dt>Ожидающие</dt><dd id="iPend">—</dd>
+    </dl>
+  </section>
+
+  <section>
+    <h2>Консоль (только чтение)</h2>
+    <div class="row" style="margin-bottom:8px">
+      <input type="text" id="cmd" placeholder="например 0100 или 22F190" autocomplete="off" autocapitalize="characters">
+      <button id="btnSend" disabled>Отправить</button>
+    </div>
+    <pre id="log"></pre>
+    <p class="note">Сканер отправляет только запросы чтения: AT/ST‑настройки адаптера и режимы 01, 03, 07, 09, 22. Команды записи, стирания ошибок и программирования заблокированы.</p>
+  </section>
+</div>
+
+<script>
+"use strict";
+// ---------- PID table: bytes, decode, label, unit ----------
+const PIDS = {
+  0x04: { n: 1, f: b => b[0] * 100 / 255, k: "load", label: "Нагрузка", unit: "%", d: 0 },
+  0x05: { n: 1, f: b => b[0] - 40, k: "coolant", label: "ОЖ", unit: "°C", d: 0 },
+  0x06: { n: 1, f: b => (b[0] - 128) * 100 / 128, k: "stft1", label: "STFT ряд 1", unit: "%", d: 1 },
+  0x07: { n: 1, f: b => (b[0] - 128) * 100 / 128, k: "ltft1", label: "LTFT ряд 1", unit: "%", d: 1 },
+  0x08: { n: 1, f: b => (b[0] - 128) * 100 / 128, k: "stft2", label: "STFT ряд 2", unit: "%", d: 1 },
+  0x09: { n: 1, f: b => (b[0] - 128) * 100 / 128, k: "ltft2", label: "LTFT ряд 2", unit: "%", d: 1 },
+  0x0C: { n: 2, f: b => (b[0] * 256 + b[1]) / 4, k: "rpm", label: "Обороты", unit: "об/мин", d: 0 },
+  0x0D: { n: 1, f: b => b[0], k: "speed", label: "Скорость", unit: "км/ч", d: 0 },
+  0x0E: { n: 1, f: b => b[0] / 2 - 64, k: "timing", label: "Угол зажиг.", unit: "°", d: 1 },
+  0x0F: { n: 1, f: b => b[0] - 40, k: "iat", label: "Впуск t", unit: "°C", d: 0 },
+  0x10: { n: 2, f: b => (b[0] * 256 + b[1]) / 100, k: "maf", label: "ДМРВ", unit: "г/с", d: 1 },
+  0x11: { n: 1, f: b => b[0] * 100 / 255, k: "throttle", label: "Дроссель", unit: "%", d: 0 },
+  0x34: { n: 4, f: b => (b[0] * 256 + b[1]) * 2 / 65536, k: "lambda1", label: "Лямбда ряд 1", unit: "λ", d: 3 },
+  0x38: { n: 4, f: b => (b[0] * 256 + b[1]) * 2 / 65536, k: "lambda2", label: "Лямбда ряд 2", unit: "λ", d: 3 },
+  0x44: { n: 2, f: b => (b[0] * 256 + b[1]) * 2 / 65536, k: "cmdLambda", label: "Лямбда цель", unit: "λ", d: 3 },
+};
+const ORDER = [0x0C, 0x0D, 0x11, 0x04, 0x0E, 0x10, 0x0F, 0x05, 0x34, 0x38, 0x44, 0x06, 0x07, 0x08, 0x09];
+const FAST = [0x0C, 0x0D, 0x11, 0x0E, 0x10, 0x04];           // каждый цикл
+const SLOW = [[0x34, 0x38, 0x44, 0x0F], [0x06, 0x07, 0x08, 0x09, 0x05]]; // по очереди
+const CSV_KEYS = ["t", ...ORDER.map(p => PIDS[p].k)];
+
+// ---------- state ----------
+const $ = id => document.getElementById(id);
+const S = { dev: null, rx: null, tx: null, buf: "", waiter: null, busy: Promise.resolve(),
+  live: false, demo: false, supported: new Set(ORDER), vals: {}, rec: null, t0: 0,
+  hist: [], cycles: 0, rateT: 0, wake: null };
+
+function log(s) { const el = $("log"); el.textContent = (el.textContent + s + "\n").slice(-6000); el.scrollTop = el.scrollHeight; }
+function setStatus(txt, cls) { const el = $("status"); el.textContent = txt; el.className = "status " + (cls || ""); }
+function enable(on) { ["btnLive", "btnRec", "btnInfo", "btnDtc", "btnSend", "btnDisconnect"].forEach(id => $(id).disabled = !on);
+  $("btnConnect").disabled = on; $("btnDemo").disabled = on; }
+
+// ---------- BLE transport (OBDLink CX: service FFF0, notify FFF1, write FFF2) ----------
+const SVC = 0xFFF0, RX = 0xFFF1, TX = 0xFFF2;
+async function connect() {
+  if (!navigator.bluetooth) { setStatus("нет Bluetooth в браузере", ""); log("Web Bluetooth недоступен. На iPhone откройте страницу в браузере Bluefy."); return; }
+  try {
+    S.dev = await navigator.bluetooth.requestDevice({ filters: [{ services: [SVC] }, { namePrefix: "OBDLink" }], optionalServices: [SVC] });
+    S.dev.addEventListener("gattserverdisconnected", () => { setStatus("связь потеряна", ""); stopLive(); enable(false); });
+    setStatus("подключение…");
+    const gatt = await S.dev.gatt.connect();
+    const svc = await gatt.getPrimaryService(SVC);
+    S.rx = await svc.getCharacteristic(RX); S.tx = await svc.getCharacteristic(TX);
+    S.rx.addEventListener("characteristicvaluechanged", e => onData(new TextDecoder().decode(e.target.value)));
+    await S.rx.startNotifications();
+    await initAdapter();
+    setStatus("подключено", "on"); enable(true);
+  } catch (e) { setStatus("не подключено"); log("Ошибка подключения: " + e.message); }
+}
+function onData(s) { S.buf += s; if (S.buf.includes(">") && S.waiter) { const r = S.buf; S.buf = ""; const w = S.waiter; S.waiter = null; w(r); } }
+async function writeRaw(str) {
+  const data = new TextEncoder().encode(str);
+  for (let i = 0; i < data.length; i += 20) {
+    const chunk = data.slice(i, i + 20);
+    if (S.tx.writeValueWithResponse) await S.tx.writeValueWithResponse(chunk); else await S.tx.writeValue(chunk);
+  }
+}
+// Serialized command: returns raw text up to the '>' prompt
+function cmd(c, timeout = 2500) {
+  const run = async () => {
+    if (S.demo) return demoReply(c);
+    S.buf = "";
+    const p = new Promise((res, rej) => { S.waiter = res; setTimeout(() => { if (S.waiter === res) { S.waiter = null; rej(new Error("таймаут: " + c)); } }, timeout); });
+    await writeRaw(c + "\r");
+    return (await p).replace(/>/g, "").trim();
+  };
+  const p = S.busy.then(run, run); S.busy = p.catch(() => {}); return p;
+}
+async function initAdapter() {
+  for (const [c, t] of [["ATZ", 5000], ["ATE0"], ["ATL0"], ["ATS0"], ["ATH0"], ["ATCAF1"], ["ATSP6"], ["ATSH7E0"], ["ATAT1"]]) {
+    try { const r = await cmd(c, t); log(c + " → " + r.replace(/\s+/g, " ")); } catch (e) { log(e.message); }
+  }
+  await detectSupported();
+}
+
+// ---------- response parsing ----------
+function parseHex(txt) {
+  const lines = txt.split(/[\r\n]+/).map(l => l.trim()).filter(l => l && !/^SEARCHING/i.test(l));
+  if (!lines.length || lines.some(l => /NO DATA|ERROR|UNABLE|STOPPED|\?|BUS/i.test(l))) return null;
+  let hex;
+  if (/^[0-9A-F]{3}$/i.test(lines[0]) && lines[1] && /^[0-9A-F]:/i.test(lines[1])) {
+    const len = parseInt(lines[0], 16);
+    hex = lines.slice(1).map(l => l.replace(/^[0-9A-F]:/i, "")).join("").replace(/\s/g, "").slice(0, len * 2);
+  } else hex = lines.join("").replace(/\s/g, "");
+  if (!/^([0-9A-F]{2})+$/i.test(hex)) return null;
+  return hex.match(/../g).map(h => parseInt(h, 16));
+}
+function decodeMode01(bytes) {
+  const out = {}; if (!bytes || bytes[0] !== 0x41) return out;
+  let i = 1;
+  while (i < bytes.length) {
+    const pid = bytes[i], def = PIDS[pid]; if (!def) break;
+    const d = bytes.slice(i + 1, i + 1 + def.n); if (d.length < def.n) break;
+    out[def.k] = def.f(d); i += 1 + def.n;
+  }
+  return out;
+}
+async function detectSupported() {
+  const sup = new Set();
+  for (const base of [0x00, 0x20, 0x40]) {
+    const b = parseHex(await cmd("01" + hex2(base)).catch(() => ""));
+    if (!b || b[0] !== 0x41) break;
+    const mask = (b[2] << 24 | b[3] << 16 | b[4] << 8 | b[5]) >>> 0;
+    for (let i = 0; i < 32; i++) if (mask & (1 << (31 - i))) sup.add(base + i + 1);
+    if (!(mask & 1)) break;
+  }
+  if (sup.size) { S.supported = sup; log("Поддерживаемые PID: " + [...sup].map(hex2).join(" ")); }
+  renderGauges();
+}
+const hex2 = n => n.toString(16).toUpperCase().padStart(2, "0");
+
+// ---------- live polling ----------
+async function poll(pids) {
+  const list = pids.filter(p => S.supported.has(p));
+  for (let i = 0; i < list.length; i += 6) {
+    const part = list.slice(i, i + 6);
+    const r = await cmd("01" + part.map(hex2).join(""));
+    Object.assign(S.vals, decodeMode01(parseHex(r)));
+  }
+}
+async function liveLoop() {
+  let n = 0;
+  while (S.live) {
+    try { await poll(FAST.concat(SLOW[n++ % SLOW.length])); } catch (e) { log(e.message); await sleep(300); }
+    S.cycles++; const now = performance.now();
+    if (now - S.rateT > 1000) { $("rate").textContent = "· " + (S.cycles * 1000 / (now - S.rateT)).toFixed(1) + " Гц"; S.cycles = 0; S.rateT = now; }
+    onSample(now);
+    if (S.demo) await sleep(80);
+  }
+}
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+async function startLive() {
+  S.live = true; S.rateT = performance.now(); S.cycles = 0; $("btnLive").textContent = "Стоп опроса";
+  try { S.wake = await navigator.wakeLock?.request("screen"); } catch (e) {}
+  liveLoop();
+}
+function stopLive() { S.live = false; $("btnLive").textContent = "Старт опроса"; try { S.wake?.release(); } catch (e) {} S.wake = null; }
+
+// ---------- samples, alerts, recording ----------
+function onSample(now) {
+  const v = S.vals, t = (now - S.t0) / 1000;
+  S.hist.push({ t, timing: v.timing, rpm: v.rpm, thr: v.throttle }); if (S.hist.length > 60) S.hist.shift();
+  if (S.rec) { S.rec.push(CSV_KEYS.map(k => k === "t" ? t.toFixed(3) : (v[k] ?? "")).join(",")); $("recInfo").textContent = S.rec.length - 1 + " строк"; }
+  renderValues(); renderAlerts();
+}
+function wot() { return (S.vals.throttle ?? 0) > 85 && (S.vals.rpm ?? 0) > 2500; }
+function renderAlerts() {
+  const v = S.vals, a = [];
+  if (wot()) {
+    [["lambda1", "ряд 1"], ["lambda2", "ряд 2"]].forEach(([k, n]) => {
+      if (v[k] > 0.95) a.push(["bad", `Бедно на полном газу, ${n}: λ ${v[k].toFixed(3)}. Для атмо цель около 0.86–0.88.`]);
+    });
+    const h = S.hist.filter(x => x.t > S.hist[S.hist.length - 1].t - 0.8 && x.timing != null);
+    if (h.length > 2) { const max = Math.max(...h.map(x => x.timing)), last = h[h.length - 1].timing;
+      if (max - last >= 3) a.push(["bad", `Провал угла ${(max - last).toFixed(1)}° за доли секунды: возможен откат по детонации.`]); }
+  }
+  ["ltft1", "ltft2"].forEach(k => { if (Math.abs(v[k] ?? 0) > 10) a.push(["warn", `Долгосрочная коррекция ${PIDS[k === "ltft1" ? 7 : 9].label}: ${v[k].toFixed(1)}%. Больше ±10% значит, что модель воздуха не совпадает с мотором.`]); });
+  $("alerts").innerHTML = a.map(([c, t]) => `<div class="alert ${c === "bad" ? "bad" : ""}">${t}</div>`).join("");
+}
+function gaugeClass(k, x) {
+  if (x == null) return "na";
+  if ((k === "ltft1" || k === "ltft2") && Math.abs(x) > 10) return "warn";
+  if ((k === "lambda1" || k === "lambda2") && wot() && x > 0.95) return "bad";
+  if (k === "coolant" && x > 110) return "bad";
+  if (k === "iat" && x > 55) return "warn";
+  return "";
+}
+function renderGauges() {
+  $("gauges").innerHTML = ORDER.filter(p => S.supported.has(p)).map(p => { const d = PIDS[p];
+    return `<div class="g na" id="g_${d.k}"><span class="k">${d.label}</span><span class="v"><b>—</b><small>${d.unit}</small></span></div>`; }).join("");
+}
+function renderValues() {
+  ORDER.forEach(p => { const d = PIDS[p], el = $("g_" + d.k); if (!el) return; const x = S.vals[d.k];
+    el.className = "g " + gaugeClass(d.k, x); el.querySelector("b").textContent = x == null ? "—" : x.toFixed(d.d); });
+}
+function toggleRec() {
+  if (S.rec) { $("btnRec").classList.remove("active"); $("btnRec").textContent = "Запись лога"; $("btnCsv").disabled = S.rec.length < 2; S.lastCsv = S.rec.join("\n"); S.rec = null; return; }
+  S.t0 = performance.now(); S.rec = [CSV_KEYS.join(",")]; $("btnRec").classList.add("active"); $("btnRec").textContent = "Остановить запись";
+  if (!S.live) startLive();
+}
+async function saveCsv() {
+  const name = "m276_" + new Date().toISOString().replace(/[:T]/g, "-").slice(0, 19) + ".csv";
+  const file = new File([S.lastCsv], name, { type: "text/csv" });
+  try { if (navigator.canShare?.({ files: [file] })) { await navigator.share({ files: [file], title: name }); return; } } catch (e) { if (e.name === "AbortError") return; }
+  const a = document.createElement("a"); a.href = URL.createObjectURL(file); a.download = name; a.click();
+  try { await navigator.clipboard.writeText(S.lastCsv); log("CSV также скопирован в буфер обмена."); } catch (e) {}
+}
+
+// ---------- info & DTC ----------
+const ascii = b => String.fromCharCode(...b.filter(x => x >= 0x20 && x < 0x7F)).trim();
+async function readInfo() {
+  try { const b = parseHex(await cmd("0902", 4000)); $("iVin").textContent = b ? ascii(b.slice(3)) : "нет ответа"; } catch (e) { $("iVin").textContent = e.message; }
+  try { const b = parseHex(await cmd("0904", 4000));
+    if (b) { const ids = []; for (let i = 3; i + 16 <= b.length; i += 16) ids.push(ascii(b.slice(i, i + 16))); $("iCal").textContent = ids.join(" · ") || "пусто"; } else $("iCal").textContent = "нет ответа";
+  } catch (e) { $("iCal").textContent = e.message; }
+  try { const b = parseHex(await cmd("0906", 4000));
+    if (b) { const c = []; for (let i = 3; i + 4 <= b.length; i += 4) c.push(b.slice(i, i + 4).map(hex2).join("")); $("iCvn").textContent = c.join(" · ") || "пусто"; } else $("iCvn").textContent = "нет ответа";
+  } catch (e) { $("iCvn").textContent = e.message; }
+}
+function decodeDtcs(b, head) {
+  if (!b) return "нет ответа"; if (b[0] !== head) return "непонятный ответ";
+  const L = "PCBU", codes = [];
+  for (let i = 2; i + 1 < b.length; i += 2) { const a = b[i], c = b[i + 1]; if (!a && !c) continue;
+    codes.push(L[a >> 6] + ((a >> 4) & 3) + hex2(a & 15)[1] + hex2(c)); }
+  return codes.length ? codes.join(" ") : "нет";
+}
+async function readDtc() {
+  try { $("iDtc").textContent = decodeDtcs(parseHex(await cmd("03", 4000)), 0x43); } catch (e) { $("iDtc").textContent = e.message; }
+  try { $("iPend").textContent = decodeDtcs(parseHex(await cmd("07", 4000)), 0x47); } catch (e) { $("iPend").textContent = e.message; }
+}
+
+// ---------- read-only console ----------
+const ALLOW = /^(AT(?!PP|MA)[A-Z0-9 .]*|ST(DI|I|MA|PRS)[A-Z0-9 ]*|01[0-9A-F]{2,12}|0[379]([0-9A-F]{2})?|22[0-9A-F]{4,12}|1003)$/i;
+async function sendConsole() {
+  const c = $("cmd").value.trim().toUpperCase().replace(/\s+/g, ""); if (!c) return;
+  if (!ALLOW.test(c)) { log("Заблокировано: " + c + ". Разрешены только запросы чтения."); return; }
+  log("> " + c); try { log(await cmd(c, 4000)); } catch (e) { log(e.message); }
+}
+
+// ---------- demo: simulated pulls so the page can be tried before the adapter arrives ----------
+let demoT = 0;
+function demoState() {
+  demoT += 0.08; const cyc = demoT % 14, pull = cyc > 6 && cyc < 11, p = pull ? (cyc - 6) / 5 : 0;
+  const rpm = pull ? 2200 + p * 4400 : 800 + 20 * Math.sin(demoT * 3), thr = pull ? 100 : cyc < 6 ? 0 : 12;
+  const knock = pull && p > 0.7 && p < 0.78;
+  return { rpm, speed: pull ? 40 + p * 75 : 40 + cyc, thr, load: pull ? 92 : 22, timing: pull ? 24 + p * 8 - (knock ? 5 : 0) : 12,
+    maf: rpm / 6500 * (pull ? 260 : 40), iat: 34, cool: 91, stft: 1.5 * Math.sin(demoT), ltft1: 4.7, ltft2: 11.6,
+    l1: pull ? (p > 0.85 ? 0.97 : 0.88) : 1 + 0.02 * Math.sin(demoT * 5), l2: pull ? 0.875 : 1, cmd: pull ? 0.87 : 1 };
+}
+function demoByte(pid, s) {
+  const r = v => Math.max(0, Math.min(255, Math.round(v))), w = v => [r(v >> 8), r(v & 255)];
+  switch (pid) {
+    case 0x04: return [r(s.load * 2.55)]; case 0x05: return [r(s.cool + 40)];
+    case 0x06: case 0x08: return [r(s.stft * 1.28 + 128)]; case 0x07: return [r(s.ltft1 * 1.28 + 128)]; case 0x09: return [r(s.ltft2 * 1.28 + 128)];
+    case 0x0C: return w(Math.round(s.rpm * 4)); case 0x0D: return [r(s.speed)]; case 0x0E: return [r((s.timing + 64) * 2)];
+    case 0x0F: return [r(s.iat + 40)]; case 0x10: return w(Math.round(s.maf * 100)); case 0x11: return [r(s.thr * 2.55)];
+    case 0x34: return [...w(Math.round(s.l1 * 32768)), 128, 0]; case 0x38: return [...w(Math.round(s.l2 * 32768)), 128, 0];
+    case 0x44: return w(Math.round(s.cmd * 32768));
+  }
+}
+function demoReply(c) {
+  if (c.startsWith("01")) { const s = demoState(), pids = c.slice(2).match(/../g).map(h => parseInt(h, 16));
+    return "41" + pids.map(p => hex2(p) + (demoByte(p, s) || []).map(hex2).join("")).join(""); }
+  if (c === "0902") return "014\r0:490201574444\r1:32303430303030\r2:41303030303030";
+  if (c === "0904") return "NO DATA";
+  if (c === "03") return "4300"; if (c === "07") return "4700";
+  return "OK";
+}
+function startDemo() { S.demo = true; S.supported = new Set(ORDER); setStatus("демо-режим", "demo"); enable(true); renderGauges(); log("Демо: данные выдуманы, чтобы показать работу страницы. Это не твоя машина."); startLive(); }
+
+// ---------- wiring ----------
+$("btnConnect").onclick = connect;
+$("btnDemo").onclick = startDemo;
+$("btnDisconnect").onclick = () => { stopLive(); if (S.dev?.gatt?.connected) S.dev.gatt.disconnect(); S.demo = false; enable(false); setStatus("не подключено"); };
+$("btnLive").onclick = () => S.live ? stopLive() : startLive();
+$("btnRec").onclick = toggleRec;
+$("btnCsv").onclick = saveCsv;
+$("btnInfo").onclick = readInfo;
+$("btnDtc").onclick = readDtc;
+$("btnSend").onclick = sendConsole;
+$("cmd").addEventListener("keydown", e => { if (e.key === "Enter") sendConsole(); });
+renderGauges();
+</script>
+</body>
+</html>
