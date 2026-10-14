@@ -42,7 +42,7 @@ button.primary { background: var(--accent); color: var(--bg); border-color: var(
 button.rec { border-color: var(--bad); color: var(--bad); }
 button.rec.active { background: var(--bad); color: var(--bg); }
 button:disabled { opacity: .45; cursor: default; }
-button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; min-width: 0; }
 .gauges { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
 .g { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; display: grid; gap: 2px; }
@@ -59,6 +59,7 @@ dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; margi
 dt { color: var(--muted); } dd { margin: 0; font-family: var(--f-mono); word-break: break-all; }
 .meta { font: 400 12px var(--f-mono); color: var(--muted); }
 pre { font: 400 12px/1.4 var(--f-mono); max-height: 220px; overflow: auto; margin: 0; white-space: pre-wrap; word-break: break-all; color: var(--muted); }
+select { font: 14px var(--f-body); padding: 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); min-height: 44px; max-width: 100%; }
 input[type=text] { flex: 1; min-width: 0; font: 14px var(--f-mono); padding: 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); min-height: 44px; }
 .note { font-size: 13px; color: var(--muted); max-width: 65ch; }
 .dtc { font-family: var(--f-mono); }
@@ -76,7 +77,7 @@ input[type=text] { flex: 1; min-width: 0; font: 14px var(--f-mono); padding: 10p
 <body>
 <div class="wrap">
   <header>
-    <h1>M276 Сканер<small>C 300 4MATIC · OBDLink CX · v0.3</small></h1>
+    <h1>M276 Сканер<small>C 300 4MATIC · OBDLink CX · v0.4</small></h1>
     <span id="status" class="status">не подключено</span>
   </header>
 
@@ -113,6 +114,8 @@ input[type=text] { flex: 1; min-width: 0; font: 14px var(--f-mono); padding: 10p
       <button id="btnInfo" disabled>Прочитать VIN и калибровку</button>
       <button id="btnDtc" disabled>Прочитать ошибки</button>
       <button id="btnMis" disabled>Пропуски по цилиндрам</button>
+      <button id="btnFF" disabled>Стоп-кадр ошибки</button>
+      <button id="btnRdy" disabled>Готовность мониторов</button>
     </div>
     <dl id="info">
       <dt>VIN</dt><dd id="iVin">—</dd>
@@ -122,6 +125,38 @@ input[type=text] { flex: 1; min-width: 0; font: 14px var(--f-mono); padding: 10p
       <dt>Ожидающие</dt><dd id="iPend">—</dd>
     </dl>
     <div id="misfire" class="mis" hidden></div>
+    <div id="ffOut" class="mis" hidden></div>
+    <div id="rdyOut" class="mis" hidden></div>
+  </section>
+
+  <section>
+    <h2>Разведка блоков</h2>
+    <p class="note">Ищем параметры, которых нет в стандартном OBD, например температуру масла АКПП. Делай на стоящей машине: зажигание включено или мотор на холостых. Отправляются только запросы чтения.</p>
+    <div class="row" style="margin:8px 0">
+      <select id="discTarget" aria-label="Блок">
+        <option value="7E1">АКПП, адрес 7E1 (стандарт OBD, проверим)</option>
+        <option value="7E0">Двигатель, адрес 7E0</option>
+      </select>
+      <input type="text" id="discCustom" placeholder="свой адрес, напр. 7E2" autocomplete="off" autocapitalize="characters" style="max-width:12em">
+    </div>
+    <div class="row" style="margin-bottom:8px">
+      <button id="btnDiscId" disabled>1. Опознать блок</button>
+      <button id="btnDiscKwp" disabled>2. Перебор KWP 21xx</button>
+    </div>
+    <div class="row" style="margin-bottom:8px">
+      <input type="text" id="discFrom" value="0000" aria-label="UDS от" autocomplete="off" autocapitalize="characters" style="max-width:6em">
+      <input type="text" id="discTo" value="0FFF" aria-label="UDS до" autocomplete="off" autocapitalize="characters" style="max-width:6em">
+      <label class="meta" style="align-self:center"><input type="checkbox" id="discExt"> расширенная сессия</label>
+      <button id="btnDiscUds" disabled>3. Перебор UDS 22xxxx</button>
+      <button id="btnDiscStop" disabled>Стоп</button>
+    </div>
+    <div class="row" style="margin-bottom:8px">
+      <input type="text" id="snapLabel" placeholder="метка снимка, напр. холодная" autocomplete="off">
+      <button id="btnDiscSnap" disabled>Снимок значений</button>
+      <button id="btnDiscSave" disabled>Сохранить разведку</button>
+    </div>
+    <p id="discProg" class="meta"></p>
+    <div id="discOut" class="mis"></div>
   </section>
 
   <section>
@@ -131,7 +166,7 @@ input[type=text] { flex: 1; min-width: 0; font: 14px var(--f-mono); padding: 10p
       <button id="btnSend" disabled>Отправить</button>
     </div>
     <pre id="log"></pre>
-    <p class="note">Сканер отправляет только запросы чтения: AT/ST‑настройки адаптера и режимы 01, 03, 06, 07, 09, 22. Команды записи, стирания ошибок и программирования заблокированы.</p>
+    <p class="note">Сканер отправляет только запросы чтения: AT/ST‑настройки адаптера и режимы 01, 02, 03, 06, 07, 09, 1A, 21, 22 и служебные 10 03 / 3E 00. Команды записи, стирания ошибок и программирования заблокированы.</p>
   </section>
 </div>
 
@@ -169,7 +204,7 @@ const S = { dev: null, rx: null, tx: null, buf: "", waiter: null, busy: Promise.
 
 function log(s) { S.logLines.push(new Date().toISOString().slice(11, 23) + " " + s); if (S.logLines.length > 400) S.logLines.shift(); const el = $("log"); el.textContent = (el.textContent + s + "\n").slice(-6000); el.scrollTop = el.scrollHeight; }
 function setStatus(txt, cls) { const el = $("status"); el.textContent = txt; el.className = "status " + (cls || ""); }
-function enable(on) { ["btnLive", "btnRec", "btnInfo", "btnDtc", "btnMis", "btnSend", "btnDisconnect", "btnSession"].forEach(id => $(id).disabled = !on);
+function enable(on) { ["btnLive", "btnRec", "btnInfo", "btnDtc", "btnMis", "btnFF", "btnRdy", "btnDiscId", "btnDiscKwp", "btnDiscUds", "btnSend", "btnDisconnect", "btnSession"].forEach(id => $(id).disabled = !on);
   $("btnConnect").disabled = on; $("btnDemo").disabled = on; }
 
 // ---------- BLE transport (OBDLink CX: service FFF0, notify FFF1, write FFF2) ----------
@@ -285,6 +320,7 @@ async function liveLoop() {
 }
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 async function startLive() {
+  try { await setHeader("7E0"); } catch (e) { log(e.message); }
   S.live = true; S.rateT = performance.now(); S.cycles = 0; $("btnLive").textContent = "Стоп опроса";
   try { S.wake = await navigator.wakeLock?.request("screen"); } catch (e) {}
   liveLoop();
@@ -407,6 +443,7 @@ function buildReportText(r, rows) {
   L.push("АДАПТЕР", `  ${r.adapter.device} · ${r.adapter.id} · напряжение ${r.adapter.voltage} · протокол ${r.adapter.protocol}`, "");
   L.push("ЭБУ ДВИГАТЕЛЯ", `  VIN:            ${r.ecu.vin}`, `  Calibration ID: ${r.ecu.calibrationId}`, `  CVN:            ${r.ecu.cvn}`, "");
   L.push("ОШИБКИ", `  в начале: сохранённые ${r.dtc.atStart.stored}; ожидающие ${r.dtc.atStart.pending}`, `  в конце:  сохранённые ${r.dtc.atEnd.stored}; ожидающие ${r.dtc.atEnd.pending}`, "");
+  L.push("СТОП-КАДР ОШИБКИ (в начале)", ffText(r.freezeFrame), "", "ГОТОВНОСТЬ МОНИТОРОВ (в начале)", rdyText(r.readiness), "");
   L.push("ПРОПУСКИ ЗАЖИГАНИЯ (режим 06), в начале", misfireText(r.misfire.atStart), "ПРОПУСКИ ЗАЖИГАНИЯ, в конце", misfireText(r.misfire.atEnd), "");
   L.push(`УЧАСТКИ (всего ${dur.toFixed(0)} с, ${rows.length} строк)`);
   ["холостой", "круиз", "разгон", "торможение"].forEach(p => L.push(`  ${p.padEnd(11)} ${(total[p] || 0).toFixed(1)} с`));
@@ -461,6 +498,153 @@ function misfireText(res) {
   return res.cylinders.map(c => `  цилиндр ${c.cyl}: текущая поездка ${c.current ?? "—"}, среднее за 10 поездок ${c.avg10 ?? "—"}`).join("\n");
 }
 
+// ---------- freeze frame (Mode 02) and readiness monitors (PID 01) ----------
+const FF_PIDS = [0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11];
+async function readFreezeFrame() {
+  const res = { dtc: null, values: {}, note: "" };
+  try {
+    const b = parseHex(await cmd("020200", 3000));
+    if (!b || b[0] !== 0x42) { res.note = "ЭБУ не отдал стоп-кадр"; }
+    else {
+      const a = b[3], c = b[4];
+      if (!a && !c) res.note = "стоп-кадра нет: сохранённых ошибок с кадром нет";
+      else {
+        res.dtc = "PCBU"[a >> 6] + ((a >> 4) & 3) + hex2(a & 15)[1] + hex2(c);
+        for (const pid of FF_PIDS) {
+          const r = parseHex(await cmd("02" + hex2(pid) + "00", 3000).catch(() => ""));
+          const d = PIDS[pid];
+          if (r && r[0] === 0x42 && r[1] === pid && r.length >= 3 + d.n) res.values[d.label] = d.f(r.slice(3, 3 + d.n)).toFixed(d.d) + " " + d.unit;
+        }
+      }
+    }
+  } catch (e) { res.note = e.message; }
+  S.info.freezeFrame = res;
+  const el = $("ffOut"); el.hidden = false;
+  el.innerHTML = res.dtc ? `<table><tr><th>Стоп-кадр ${res.dtc}</th><th></th></tr>` + Object.entries(res.values).map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join("") + "</table>" : `<p class="note">${res.note}</p>`;
+  return res;
+}
+const RDY_SPARK = [["Пропуски зажигания", 0], ["Топливная система", 1], ["Компоненты", 2]];
+const RDY_EXT = ["Катализатор", "Подогрев катализатора", "Система EVAP", "Вторичный воздух", "Кондиционер (резерв)", "Лямбда-зонды", "Подогрев лямбда-зондов", "EGR / VVT"];
+async function readReadiness() {
+  const res = { mil: null, dtcCount: null, tests: [], note: "" };
+  try {
+    const b = parseHex(await cmd("0101", 3000));
+    if (!b || b[0] !== 0x41 || b[1] !== 0x01) res.note = "ЭБУ не отдал статус мониторов";
+    else {
+      const [A, B, C, D] = b.slice(2, 6);
+      res.mil = !!(A & 0x80); res.dtcCount = A & 0x7F;
+      RDY_SPARK.forEach(([n, bit]) => { if (B & (1 << bit)) res.tests.push({ name: n, done: !(B & (1 << (bit + 4))) }); });
+      RDY_EXT.forEach((n, bit) => { if (C & (1 << bit)) res.tests.push({ name: n, done: !(D & (1 << bit)) }); });
+    }
+  } catch (e) { res.note = e.message; }
+  S.info.readiness = res;
+  const el = $("rdyOut"); el.hidden = false;
+  el.innerHTML = res.mil == null ? `<p class="note">${res.note}</p>` :
+    `<p class="note">Лампа Check Engine: ${res.mil ? "горит" : "не горит"} · ошибок по ЭБУ: ${res.dtcCount}</p><table><tr><th>Монитор</th><th>Статус</th></tr>` +
+    res.tests.map(t => `<tr class="${t.done ? "" : "hot"}"><td>${t.name}</td><td>${t.done ? "готов" : "не завершён"}</td></tr>`).join("") + "</table>";
+  return res;
+}
+function ffText(r) { if (!r) return "  не читался"; if (!r.dtc) return "  " + r.note; return `  ошибка ${r.dtc}\n` + Object.entries(r.values).map(([k, v]) => `  ${k}: ${v}`).join("\n"); }
+function rdyText(r) { if (!r) return "  не читалась"; if (r.mil == null) return "  " + r.note;
+  return `  лампа Check Engine: ${r.mil ? "горит" : "не горит"}, ошибок: ${r.dtcCount}\n` + r.tests.map(t => `  ${t.name}: ${t.done ? "готов" : "НЕ ЗАВЕРШЁН"}`).join("\n"); }
+
+// ---------- discovery: find non-standard parameters (KWP 21 / UDS 22), read-only ----------
+const hex4 = n => n.toString(16).toUpperCase().padStart(4, "0");
+S.disc = { target: null, ident: [], hits: [], snaps: [] }; S.hdr = "7E0"; S.discStop = false;
+function discTarget() { const c = $("discCustom").value.trim().toUpperCase(); return /^[0-7][0-9A-F]{2}$/.test(c) ? c : $("discTarget").value; }
+async function setHeader(h) { if (S.hdr !== h) { await cmd("ATSH" + h); S.hdr = h; } }
+function discBusy(on) { ["btnDiscId", "btnDiscKwp", "btnDiscUds", "btnDiscSnap", "btnDiscSave"].forEach(id => $(id).disabled = on); $("btnDiscStop").disabled = !on; }
+async function discPrepare() {
+  const t = discTarget();
+  if (S.live) stopLive();
+  await sleep(150);
+  if (S.disc.target !== t) S.disc = { target: t, ident: [], hits: [], snaps: [] };
+  await setHeader(t);
+  return t;
+}
+function classify(b, svc) {
+  if (!b) return { kind: "нет ответа" };
+  if (b[0] === svc + 0x40) return { kind: "ok", data: b.map(hex2).join("") };
+  if (b[0] === 0x7F) return { kind: "отказ", nrc: hex2(b[2] ?? 0) };
+  return { kind: "непонятно", data: b.map(hex2).join("") };
+}
+async function discIdentify() {
+  discBusy(true); S.discStop = false;
+  try {
+    const t = await discPrepare(); S.disc.ident = [];
+    for (const q of ["0100", "1A86", "1A87", "1A90", "22F190", "22F187", "22F18A", "22F18C", "22F111"]) {
+      const r = classify(parseHex(await cmd(q, 2000).catch(() => "")), parseInt(q.slice(0, 2), 16));
+      S.disc.ident.push({ q, ...r });
+    }
+    const kwp = S.disc.ident.some(x => x.q.startsWith("1A") && x.kind === "ok"), uds = S.disc.ident.some(x => x.q.startsWith("22") && x.kind === "ok");
+    const any = S.disc.ident.some(x => x.kind !== "нет ответа");
+    S.disc.protocol = !any ? "блок не отвечает" : uds ? "UDS (сервис 22)" : kwp ? "KWP2000 (сервис 21)" : "отвечает, протокол не ясен";
+    $("discProg").textContent = `Блок ${t}: ${S.disc.protocol}. ` + (!any ? "Попробуй другой адрес." : uds ? "Дальше: перебор UDS." : "Дальше: перебор KWP.");
+    renderDisc();
+  } catch (e) { log("Разведка: " + e.message); }
+  discBusy(false);
+}
+async function discScan(svc) {
+  discBusy(true); S.discStop = false;
+  try {
+    const t = await discPrepare();
+    let from = 0, to = 0xFF;
+    if (svc === 0x22) { from = parseInt($("discFrom").value, 16); to = parseInt($("discTo").value, 16);
+      if (!(from >= 0 && to <= 0xFFFF && from <= to)) { $("discProg").textContent = "Диапазон задаётся в hex, от 0000 до FFFF"; discBusy(false); return; }
+      if ($("discExt").checked) { const r = await cmd("1003", 2000).catch(e => e.message); log("1003 → " + r); } }
+    let tp = performance.now(), n = 0, found = 0, silent = 0;
+    for (let id = from; id <= to && !S.discStop; id++) {
+      const q = svc === 0x21 ? "21" + hex2(id) : "22" + hex4(id);
+      const r = classify(parseHex(await cmd(q, 1500).catch(() => "")), svc);
+      n++;
+      if (r.kind === "ok") { found++; S.disc.hits = S.disc.hits.filter(h => h.q !== q); S.disc.hits.push({ q, data: r.data }); renderDisc(); }
+      if (r.kind === "нет ответа") silent++; else silent = 0;
+      if (silent >= 20) { $("discProg").textContent = `Блок ${t} перестал отвечать на ${q}. Остановил перебор.`; break; }
+      if (svc === 0x22 && $("discExt").checked && performance.now() - tp > 2000) { tp = performance.now(); await cmd("3E00", 1000).catch(() => {}); }
+      if (n % 8 === 0) $("discProg").textContent = `Блок ${t}: ${q} · проверено ${n} · найдено ${found}`;
+    }
+    $("discProg").textContent = `Блок ${t}: перебор ${svc === 0x21 ? "KWP 21" : "UDS 22"} закончен${S.discStop ? " (остановлен)" : ""}. Проверено ${n}, найдено ${found}. Теперь сделай снимок.`;
+  } catch (e) { log("Разведка: " + e.message); }
+  discBusy(false);
+}
+async function discSnapshot() {
+  if (!S.disc.hits.length) { $("discProg").textContent = "Сначала найди параметры перебором."; return; }
+  discBusy(true); S.discStop = false;
+  try {
+    await discPrepare();
+    const label = $("snapLabel").value.trim() || "снимок " + (S.disc.snaps.length + 1), values = {};
+    for (const h of S.disc.hits) { if (S.discStop) break; const svc = parseInt(h.q.slice(0, 2), 16);
+      const r = classify(parseHex(await cmd(h.q, 1500).catch(() => "")), svc); values[h.q] = r.kind === "ok" ? r.data : r.kind; }
+    S.disc.snaps.push({ label, time: new Date().toISOString(), coolant: S.vals.coolant ?? null, values });
+    $("discProg").textContent = `Снимок «${label}» сохранён (${Object.keys(values).length} значений). Сделай следующий, когда коробка прогреется.`;
+    renderDisc();
+  } catch (e) { log("Разведка: " + e.message); }
+  discBusy(false);
+}
+function changed(q) { const vs = S.disc.snaps.map(s => s.values[q]).filter(Boolean); return vs.length > 1 && new Set(vs).size > 1; }
+function renderDisc() {
+  const d = S.disc, el = $("discOut");
+  if (!d.hits.length && !d.ident.length) { el.innerHTML = ""; return; }
+  const head = d.ident.length ? `<p class="note">Опознание ${d.target}: ` + d.ident.map(x => `${x.q} ${x.kind === "ok" ? "✓" : x.kind === "отказ" ? "✗" + x.nrc : "—"}`).join(" · ") + "</p>" : "";
+  el.innerHTML = head + (d.hits.length ? `<table><tr><th>Запрос</th><th>Ответ</th>${d.snaps.map(s => `<th>${s.label}</th>`).join("")}</tr>` +
+    d.hits.map(h => `<tr class="${changed(h.q) ? "hot" : ""}"><td>${h.q}</td><td>${h.data.slice(0, 24)}${h.data.length > 24 ? "…" : ""}</td>${d.snaps.map(s => `<td>${(s.values[h.q] || "").slice(0, 24)}</td>`).join("")}</tr>`).join("") +
+    "</table><p class=\"note\">Подсвечены значения, которые изменились между снимками. Среди них ищем температуру масла.</p>" : "");
+}
+function discText() {
+  const d = S.disc, L = [];
+  L.push("M276 СКАНЕР · РАЗВЕДКА БЛОКА " + d.target + (S.demo ? " · ДЕМО (данные выдуманы)" : ""), "=".repeat(44), "Протокол: " + (d.protocol || "не определён"), "");
+  L.push("ОПОЗНАНИЕ"); d.ident.forEach(x => L.push(`  ${x.q.padEnd(7)} ${x.kind}${x.nrc ? " NRC " + x.nrc : ""}${x.data ? " " + x.data : ""}`)); L.push("");
+  L.push("СНИМКИ"); d.snaps.forEach((s, i) => L.push(`  ${i + 1}. ${s.label} · ${s.time} · ОЖ мотора ${s.coolant ?? "—"} °C`)); L.push("");
+  L.push("НАЙДЕННЫЕ ПАРАМЕТРЫ (* = менялся между снимками)");
+  d.hits.forEach(h => { L.push(`${changed(h.q) ? "*" : " "} ${h.q}  перебор: ${h.data}`); d.snaps.forEach(s => L.push(`      ${s.label}: ${s.values[h.q] ?? "—"}`)); });
+  L.push("", "КОНСОЛЬ"); S.logLines.forEach(c => L.push("  " + c));
+  return L.join("\n");
+}
+async function discSave() {
+  const name = "m276_discovery_" + S.disc.target + "_" + new Date().toISOString().replace(/[:T]/g, "-").slice(0, 19) + ".txt";
+  await shareFile(name, discText(), "text/plain");
+}
+
 // ---------- one-button session: everything Claude needs in one file ----------
 async function shareFile(name, text, type) {
   const file = new File([text], name, { type });
@@ -481,6 +665,8 @@ async function sessionClick() {
       await readInfo(); await readDtc();
       S.session.dtcAtStart = { stored: S.info.dtcStored, pending: S.info.dtcPending };
       S.session.misfireAtStart = await readMisfire();
+      S.session.freezeFrame = await readFreezeFrame();
+      S.session.readiness = await readReadiness();
       if (S.rec) toggleRec();
       toggleRec();
       btn.textContent = "Завершить и отправить";
@@ -493,13 +679,14 @@ async function sessionClick() {
       S.session.misfireAtEnd = await readMisfire();
       const rows = S.lastRows || [];
       const report = {
-        format: "m276-scanner-report", app: "v0.3", demo: S.demo,
+        format: "m276-scanner-report", app: "v0.4", demo: S.demo,
         car: "Mercedes C 300 4MATIC W204, M276 DE35",
         started: S.session.started, finished: new Date().toISOString(),
         adapter: S.session.adapter,
         ecu: { vin: S.info.vin, calibrationId: S.info.calibrationId, cvn: S.info.cvn },
         dtc: { atStart: S.session.dtcAtStart, atEnd: { stored: S.info.dtcStored, pending: S.info.dtcPending } },
         misfire: { atStart: S.session.misfireAtStart, atEnd: S.session.misfireAtEnd },
+        freezeFrame: S.session.freezeFrame, readiness: S.session.readiness,
         supportedPids: [...S.supported].map(hex2),
         console: S.logLines.slice(),
       };
@@ -515,7 +702,7 @@ async function sessionClick() {
 }
 
 // ---------- read-only console ----------
-const ALLOW = /^(AT(?!PP|MA)[A-Z0-9 .]*|ST(DI|I|MA|PRS)[A-Z0-9 ]*|01[0-9A-F]{2,12}|06[0-9A-F]{2}|0[379]([0-9A-F]{2})?|22[0-9A-F]{4,12}|1003)$/i;
+const ALLOW = /^(AT(?!PP|MA)[A-Z0-9 .]*|ST(DI|I|MA|PRS)[A-Z0-9 ]*|01[0-9A-F]{2,12}|02[0-9A-F]{4}|06[0-9A-F]{2}|1A[0-9A-F]{2}|21[0-9A-F]{2}|3E00|0[379]([0-9A-F]{2})?|22[0-9A-F]{4,12}|1003)$/i;
 async function sendConsole() {
   const c = $("cmd").value.trim().toUpperCase().replace(/\s+/g, ""); if (!c) return;
   if (!ALLOW.test(c)) { log("Заблокировано: " + c + ". Разрешены только запросы чтения."); return; }
@@ -544,6 +731,25 @@ function demoByte(pid, s) {
   }
 }
 function demoReply(c) {
+  if (c.startsWith("ATSH")) { S.demoHdr = c.slice(4); return "OK"; }
+  if (S.demoHdr === "7E1") {
+    if (c === "0100") return "4100 00000000".replace(" ", "");
+    if (c === "1A86") return "5A86A0352703";
+    if (c === "1A87") return "5A87010203";
+    if (/^21[0-9A-F]{2}$/.test(c)) { const id = parseInt(c.slice(2), 16);
+      if (id === 0x30) return "6130" + hex2(40 + Math.min(70, Math.floor(demoT * 2))) + "1A00";
+      if (id === 0x31) return "61310364";
+      if (id === 0x40) return "614000" + hex2(Math.floor(demoT * 3) & 255);
+      return "7F2112"; }
+    if (c.startsWith("22")) return "7F2211";
+    if (c === "1003" || c === "3E00") return "7F" + c.slice(0, 2) + "11";
+    return "NO DATA";
+  }
+  if (S.demoHdr && S.demoHdr !== "7E0") return "NO DATA";
+  if (c === "0101") return "410100076101";
+  if (c === "020200") return "4202000000";
+  if (c.startsWith("22")) return c === "22F190" ? "7F2231" : "7F2231";
+  if (/^1A/.test(c)) return "7F1A11";
   if (c.startsWith("01")) { const s = demoState(), pids = c.slice(2).match(/../g).map(h => parseInt(h, 16));
     return "41" + pids.map(p => hex2(p) + (demoByte(p, s) || []).map(hex2).join("")).join(""); }
   if (c === "0902") return "014\r0:490201574444\r1:32303430303030\r2:41303030303030";
@@ -569,6 +775,14 @@ $("btnDtc").onclick = readDtc;
 $("btnSend").onclick = sendConsole;
 $("btnSession").onclick = sessionClick;
 $("btnMis").onclick = readMisfire;
+$("btnFF").onclick = readFreezeFrame;
+$("btnRdy").onclick = readReadiness;
+$("btnDiscId").onclick = discIdentify;
+$("btnDiscKwp").onclick = () => discScan(0x21);
+$("btnDiscUds").onclick = () => discScan(0x22);
+$("btnDiscStop").onclick = () => { S.discStop = true; };
+$("btnDiscSnap").onclick = discSnapshot;
+$("btnDiscSave").onclick = discSave;
 $("cmd").addEventListener("keydown", e => { if (e.key === "Enter") sendConsole(); });
 renderGauges();
 </script>
