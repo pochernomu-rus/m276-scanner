@@ -63,6 +63,12 @@ input[type=text] { flex: 1; min-width: 0; font: 14px var(--f-mono); padding: 10p
 .note { font-size: 13px; color: var(--muted); max-width: 65ch; }
 .dtc { font-family: var(--f-mono); }
 .session { border-color: var(--accent); }
+.mis { margin-top: 12px; overflow-x: auto; }
+.mis table { border-collapse: collapse; font: 14px var(--f-mono); font-variant-numeric: tabular-nums; }
+.mis th, .mis td { padding: 4px 10px; border-bottom: 1px solid var(--line); text-align: right; }
+.mis th:first-child, .mis td:first-child { text-align: left; }
+.mis th { font: 500 11px var(--f-mono); color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+.mis tr.hot td { color: var(--warn); }
 .session .note { margin: 0; }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 </style>
@@ -70,7 +76,7 @@ input[type=text] { flex: 1; min-width: 0; font: 14px var(--f-mono); padding: 10p
 <body>
 <div class="wrap">
   <header>
-    <h1>M276 Сканер<small>C 300 4MATIC · OBDLink CX · v0.2</small></h1>
+    <h1>M276 Сканер<small>C 300 4MATIC · OBDLink CX · v0.3</small></h1>
     <span id="status" class="status">не подключено</span>
   </header>
 
@@ -102,10 +108,11 @@ input[type=text] { flex: 1; min-width: 0; font: 14px var(--f-mono); padding: 10p
   </section>
 
   <section>
-    <h2>Прошивка и ошибки</h2>
+    <h2>Прошивка, ошибки, пропуски</h2>
     <div class="row" style="margin-bottom:10px">
       <button id="btnInfo" disabled>Прочитать VIN и калибровку</button>
       <button id="btnDtc" disabled>Прочитать ошибки</button>
+      <button id="btnMis" disabled>Пропуски по цилиндрам</button>
     </div>
     <dl id="info">
       <dt>VIN</dt><dd id="iVin">—</dd>
@@ -114,6 +121,7 @@ input[type=text] { flex: 1; min-width: 0; font: 14px var(--f-mono); padding: 10p
       <dt>Ошибки</dt><dd id="iDtc">—</dd>
       <dt>Ожидающие</dt><dd id="iPend">—</dd>
     </dl>
+    <div id="misfire" class="mis" hidden></div>
   </section>
 
   <section>
@@ -123,7 +131,7 @@ input[type=text] { flex: 1; min-width: 0; font: 14px var(--f-mono); padding: 10p
       <button id="btnSend" disabled>Отправить</button>
     </div>
     <pre id="log"></pre>
-    <p class="note">Сканер отправляет только запросы чтения: AT/ST‑настройки адаптера и режимы 01, 03, 07, 09, 22. Команды записи, стирания ошибок и программирования заблокированы.</p>
+    <p class="note">Сканер отправляет только запросы чтения: AT/ST‑настройки адаптера и режимы 01, 03, 06, 07, 09, 22. Команды записи, стирания ошибок и программирования заблокированы.</p>
   </section>
 </div>
 
@@ -151,7 +159,7 @@ const ORDER = [0x0C, 0x0D, 0x11, 0x04, 0x0E, 0x10, 0x0F, 0x05, 0x34, 0x38, 0x44,
 const FAST = [0x0C, 0x0D, 0x11, 0x0E, 0x10, 0x04];           // каждый цикл
 const SLOW = [[0x34, 0x38, 0x44, 0x0F], [0x06, 0x07, 0x08, 0x09, 0x05]]; // по очереди
 const PULL = [0x0C, 0x0D, 0x11, 0x0E, 0x34, 0x38];            // режим разгона: один запрос за цикл
-const CSV_KEYS = ["t", "phase", "mode", ...ORDER.map(p => PIDS[p].k)];
+const CSV_KEYS = ["t", "phase", "mode", ...ORDER.map(p => PIDS[p].k), "voltage"];
 
 // ---------- state ----------
 const $ = id => document.getElementById(id);
@@ -161,7 +169,7 @@ const S = { dev: null, rx: null, tx: null, buf: "", waiter: null, busy: Promise.
 
 function log(s) { S.logLines.push(new Date().toISOString().slice(11, 23) + " " + s); if (S.logLines.length > 400) S.logLines.shift(); const el = $("log"); el.textContent = (el.textContent + s + "\n").slice(-6000); el.scrollTop = el.scrollHeight; }
 function setStatus(txt, cls) { const el = $("status"); el.textContent = txt; el.className = "status " + (cls || ""); }
-function enable(on) { ["btnLive", "btnRec", "btnInfo", "btnDtc", "btnSend", "btnDisconnect", "btnSession"].forEach(id => $(id).disabled = !on);
+function enable(on) { ["btnLive", "btnRec", "btnInfo", "btnDtc", "btnMis", "btnSend", "btnDisconnect", "btnSession"].forEach(id => $(id).disabled = !on);
   $("btnConnect").disabled = on; $("btnDemo").disabled = on; }
 
 // ---------- BLE transport (OBDLink CX: service FFF0, notify FFF1, write FFF2) ----------
@@ -265,6 +273,10 @@ async function liveLoop() {
     let fresh = {};
     updateMode();
     try { fresh = await poll(S.pullMode ? PULL : FAST.concat(SLOW[n++ % SLOW.length])); } catch (e) { log(e.message); await sleep(300); }
+    if (!S.pullMode && performance.now() - (S.voltT || 0) > 2000) {
+      S.voltT = performance.now();
+      try { const x = parseFloat(await cmd("ATRV", 1500)); if (!Number.isNaN(x)) { fresh.voltage = x; S.vals.voltage = x; } } catch (e) {}
+    }
     S.cycles++; const now = performance.now();
     if (now - S.rateT > 1000) { $("rate").textContent = "· " + (S.cycles * 1000 / (now - S.rateT)).toFixed(1) + " Гц" + (S.pullMode ? " · режим разгона" : ""); S.cycles = 0; S.rateT = now; }
     onSample(now, fresh);
@@ -314,15 +326,18 @@ function gaugeClass(k, x) {
   if ((k === "lambda1" || k === "lambda2") && wot() && x > 0.95) return "bad";
   if (k === "coolant" && x > 110) return "bad";
   if (k === "iat" && x > 55) return "warn";
+  if (k === "voltage" && (x > 15 || ((S.vals.rpm ?? 0) > 500 && x < 13))) return "warn";
   return "";
 }
 function renderGauges() {
   $("gauges").innerHTML = ORDER.filter(p => S.supported.has(p)).map(p => { const d = PIDS[p];
-    return `<div class="g na" id="g_${d.k}"><span class="k">${d.label}</span><span class="v"><b>—</b><small>${d.unit}</small></span></div>`; }).join("");
+    return `<div class="g na" id="g_${d.k}"><span class="k">${d.label}</span><span class="v"><b>—</b><small>${d.unit}</small></span></div>`; }).join("")
+    + `<div class="g na" id="g_voltage"><span class="k">Бортсеть</span><span class="v"><b>—</b><small>В</small></span></div>`;
 }
 function renderValues() {
   ORDER.forEach(p => { const d = PIDS[p], el = $("g_" + d.k); if (!el) return; const x = S.vals[d.k];
     el.className = "g " + gaugeClass(d.k, x); el.querySelector("b").textContent = x == null ? "—" : x.toFixed(d.d); });
+  const ve = $("g_voltage"); if (ve) { const x = S.vals.voltage; ve.className = "g " + gaugeClass("voltage", x); ve.querySelector("b").textContent = x == null ? "—" : x.toFixed(1); }
 }
 function toggleRec() {
   if (S.rec) { $("btnRec").classList.remove("active"); $("btnRec").textContent = "Запись лога"; $("btnCsv").disabled = S.rec.length < 1; S.lastRows = S.rec; S.lastCsv = toCsv(S.rec); S.rec = null; return; }
@@ -360,7 +375,7 @@ async function readDtc() {
 
 function fmt(x, d) { return x == null || Number.isNaN(x) ? "" : (typeof x === "number" ? x.toFixed(d) : String(x)); }
 function toCsv(rows) {
-  const dec = Object.fromEntries(ORDER.map(p => [PIDS[p].k, PIDS[p].d + 1]));
+  const dec = Object.fromEntries(ORDER.map(p => [PIDS[p].k, PIDS[p].d + 1])); dec.voltage = 2;
   return [CSV_KEYS.join(",")].concat(rows.map(r => CSV_KEYS.map(k => k === "t" ? fmt(r.t, 3) : fmt(r[k], dec[k] ?? 0)).join(","))).join("\n");
 }
 
@@ -392,6 +407,7 @@ function buildReportText(r, rows) {
   L.push("АДАПТЕР", `  ${r.adapter.device} · ${r.adapter.id} · напряжение ${r.adapter.voltage} · протокол ${r.adapter.protocol}`, "");
   L.push("ЭБУ ДВИГАТЕЛЯ", `  VIN:            ${r.ecu.vin}`, `  Calibration ID: ${r.ecu.calibrationId}`, `  CVN:            ${r.ecu.cvn}`, "");
   L.push("ОШИБКИ", `  в начале: сохранённые ${r.dtc.atStart.stored}; ожидающие ${r.dtc.atStart.pending}`, `  в конце:  сохранённые ${r.dtc.atEnd.stored}; ожидающие ${r.dtc.atEnd.pending}`, "");
+  L.push("ПРОПУСКИ ЗАЖИГАНИЯ (режим 06), в начале", misfireText(r.misfire.atStart), "ПРОПУСКИ ЗАЖИГАНИЯ, в конце", misfireText(r.misfire.atEnd), "");
   L.push(`УЧАСТКИ (всего ${dur.toFixed(0)} с, ${rows.length} строк)`);
   ["холостой", "круиз", "разгон", "торможение"].forEach(p => L.push(`  ${p.padEnd(11)} ${(total[p] || 0).toFixed(1)} с`));
   L.push("");
@@ -405,6 +421,44 @@ function buildReportText(r, rows) {
   L.push("", "ЛОГ (CSV). Пустая ячейка: параметр в этой строке не опрашивался. mode=разгон: опрос только оборотов, скорости, дросселя, угла и лямбд");
   L.push("=== CSV START ===", toCsv(rows), "=== CSV END ===");
   return L.join("\n");
+}
+
+// ---------- misfire per cylinder: Mode 06 ----------
+async function readMisfire() {
+  const res = { supported: false, cylinders: [], note: "" };
+  try {
+    const sup = parseHex(await cmd("06A0", 4000));
+    if (!sup || sup[0] !== 0x46 || sup[1] !== 0xA0) { res.note = "ЭБУ не отдаёт тесты режима 06 (ответ: нет данных)"; return res; }
+    const mask = sup[2];
+    for (let c = 1; c <= 6; c++) {
+      const mid = 0xA1 + c;
+      if (!(mask & (0x80 >> c))) { res.cylinders.push({ cyl: c, current: null, avg10: null }); continue; }
+      const b = parseHex(await cmd("06" + hex2(mid), 4000));
+      const row = { cyl: c, current: null, avg10: null };
+      if (b && b[0] === 0x46) for (let i = 1; i + 8 < b.length + 0; i += 9) {
+        if (b[i] !== mid) continue;
+        const val = b[i + 3] * 256 + b[i + 4];
+        if (b[i + 1] === 0x0C) row.current = val; else if (b[i + 1] === 0x0B) row.avg10 = val;
+      }
+      res.supported = res.supported || row.current != null || row.avg10 != null;
+      res.cylinders.push(row);
+    }
+    if (!res.supported) res.note = "ЭБУ отвечает на режим 06, но счётчики пропусков по цилиндрам не отдаёт";
+  } catch (e) { res.note = e.message; }
+  S.info.misfire = res; renderMisfire(res); return res;
+}
+function renderMisfire(res) {
+  const el = $("misfire"); el.hidden = false;
+  if (!res.supported) { el.innerHTML = `<p class="note">${res.note}</p>`; return; }
+  const max = Math.max(...res.cylinders.map(c => c.current ?? 0));
+  el.innerHTML = `<table><tr><th>Цилиндр</th><th>Текущая поездка</th><th>Среднее за 10 поездок</th></tr>` +
+    res.cylinders.map(c => `<tr class="${max > 0 && c.current === max ? "hot" : ""}"><td>${c.cyl}</td><td>${c.current ?? "—"}</td><td>${c.avg10 ?? "—"}</td></tr>`).join("") +
+    `</table><p class="note">Номера цилиндров по нумерации Mercedes; где какой стоит на моторе, сверим по схеме M276 перед работой. Ноль везде = норма. Если один цилиндр стабильно копит пропуски, это повод проверить свечу, катушку, форсунку и компрессию именно в нём.</p>`;
+}
+function misfireText(res) {
+  if (!res) return "  не читались";
+  if (!res.supported) return "  " + res.note;
+  return res.cylinders.map(c => `  цилиндр ${c.cyl}: текущая поездка ${c.current ?? "—"}, среднее за 10 поездок ${c.avg10 ?? "—"}`).join("\n");
 }
 
 // ---------- one-button session: everything Claude needs in one file ----------
@@ -426,6 +480,7 @@ async function sessionClick() {
       S.session = { started: new Date().toISOString(), adapter: await readAdapter() };
       await readInfo(); await readDtc();
       S.session.dtcAtStart = { stored: S.info.dtcStored, pending: S.info.dtcPending };
+      S.session.misfireAtStart = await readMisfire();
       if (S.rec) toggleRec();
       toggleRec();
       btn.textContent = "Завершить и отправить";
@@ -433,16 +488,18 @@ async function sessionClick() {
     } else {
       if (S.rec) toggleRec();
       stopLive();
-      $("sessInfo").textContent = "проверяю ошибки после поездки…";
+      $("sessInfo").textContent = "проверяю ошибки и пропуски после поездки…";
       await readDtc();
+      S.session.misfireAtEnd = await readMisfire();
       const rows = S.lastRows || [];
       const report = {
-        format: "m276-scanner-report", app: "v0.2", demo: S.demo,
+        format: "m276-scanner-report", app: "v0.3", demo: S.demo,
         car: "Mercedes C 300 4MATIC W204, M276 DE35",
         started: S.session.started, finished: new Date().toISOString(),
         adapter: S.session.adapter,
         ecu: { vin: S.info.vin, calibrationId: S.info.calibrationId, cvn: S.info.cvn },
         dtc: { atStart: S.session.dtcAtStart, atEnd: { stored: S.info.dtcStored, pending: S.info.dtcPending } },
+        misfire: { atStart: S.session.misfireAtStart, atEnd: S.session.misfireAtEnd },
         supportedPids: [...S.supported].map(hex2),
         console: S.logLines.slice(),
       };
@@ -458,7 +515,7 @@ async function sessionClick() {
 }
 
 // ---------- read-only console ----------
-const ALLOW = /^(AT(?!PP|MA)[A-Z0-9 .]*|ST(DI|I|MA|PRS)[A-Z0-9 ]*|01[0-9A-F]{2,12}|0[379]([0-9A-F]{2})?|22[0-9A-F]{4,12}|1003)$/i;
+const ALLOW = /^(AT(?!PP|MA)[A-Z0-9 .]*|ST(DI|I|MA|PRS)[A-Z0-9 ]*|01[0-9A-F]{2,12}|06[0-9A-F]{2}|0[379]([0-9A-F]{2})?|22[0-9A-F]{4,12}|1003)$/i;
 async function sendConsole() {
   const c = $("cmd").value.trim().toUpperCase().replace(/\s+/g, ""); if (!c) return;
   if (!ALLOW.test(c)) { log("Заблокировано: " + c + ". Разрешены только запросы чтения."); return; }
@@ -492,6 +549,9 @@ function demoReply(c) {
   if (c === "0902") return "014\r0:490201574444\r1:32303430303030\r2:41303030303030";
   if (c === "0904") return "NO DATA";
   if (c === "ATI") return "ELM327 v1.4b"; if (c === "STDI") return "OBDLink CX (демо)"; if (c === "ATRV") return "14.2V"; if (c === "ATDPN") return "A6";
+  if (c === "06A0") return "46A0FE000000";
+  if (/^06A[2-7]$/.test(c)) { const cyl = parseInt(c[3], 16) - 1, mid = c.slice(2), cur = cyl === 3 ? 4 : 0, avg = cyl === 3 ? 1 : 0;
+    return "46" + mid + "0B24" + hex2(avg >> 8) + hex2(avg & 255) + "0000FFFF" + mid + "0C24" + hex2(cur >> 8) + hex2(cur & 255) + "0000FFFF"; }
   if (c === "03") return "4300"; if (c === "07") return "4700";
   return "OK";
 }
@@ -508,6 +568,7 @@ $("btnInfo").onclick = readInfo;
 $("btnDtc").onclick = readDtc;
 $("btnSend").onclick = sendConsole;
 $("btnSession").onclick = sessionClick;
+$("btnMis").onclick = readMisfire;
 $("cmd").addEventListener("keydown", e => { if (e.key === "Enter") sendConsole(); });
 renderGauges();
 </script>
