@@ -52,6 +52,11 @@ section { background: var(--panel); border: 1px solid var(--line); border-radius
 .g.warn { border-color: var(--warn); } .g.warn .v { color: var(--warn); }
 .g.bad { border-color: var(--bad); } .g.bad .v { color: var(--bad); }
 .g.na .v { color: var(--muted); }
+.g.cust { border-style: dashed; }
+.g .x { min-height: 0; padding: 0 6px; font-size: 14px; line-height: 1.2; float: right; border: 0; background: none; color: var(--muted); }
+.cand { display: grid; grid-template-columns: 1fr auto; gap: 6px 10px; align-items: center; border-top: 1px solid var(--line); padding: 10px 0; }
+.cand .ttl { font-weight: 600; } .cand .why { font-size: 13px; color: var(--muted); grid-column: 1 / -1; }
+.cand .row input { max-width: 14em; } .cand .row input.num { max-width: 6em; }
 /* фиксированная высота на 2 сообщения: появление предупреждений не двигает страницу */
 .alerts { display: grid; align-content: start; gap: 6px; margin-bottom: 10px; font-size: 13px; line-height: 1.45;
   height: calc(2 * (3 * 1.45em + 12px) + 6px); overflow-y: auto; overscroll-behavior: contain; }
@@ -397,6 +402,7 @@ async function liveLoop() {
     }
     if (S.ap && Object.keys(fresh).length) S.ap.lastFresh = performance.now();
     await apTcuTick().catch(e => log("АКПП: " + e.message));
+    await customTick(fresh).catch(e => log("Свои приборы: " + e.message));
     S.cycles++; const now = performance.now();
     if (now - S.rateT > 1000) { $("rate").textContent = "· " + (S.cycles * 1000 / (now - S.rateT)).toFixed(1) + " Гц" + (S.pullMode ? " · режим разгона" : ""); S.cycles = 0; S.rateT = now; }
     onSample(now, fresh);
@@ -438,6 +444,7 @@ function renderAlerts() {
     if (h.length > 2) { const max = Math.max(...h.map(x => x.timing)), last = h[h.length - 1].timing;
       if (max - last >= 3) a.push(["bad", `Провал угла ${(max - last).toFixed(1)}° за доли секунды: возможен откат по детонации.`]); }
   }
+  S.custom.forEach(c => { const x = v["c_" + c.id]; if (c.warn != null && x != null && x > c.warn) { a.push(["bad", `${c.name}: ${x.toFixed(c.d)} ${c.unit}, выше порога ${c.warn}.`]); sayOnce("c_" + c.id, `${c.name} ${x.toFixed(0)}`, "bad", 60000); } });
   ["ltft1", "ltft2"].forEach(k => { if (Math.abs(v[k] ?? 0) > 10) a.push(["warn", `Долгосрочная коррекция ${PIDS[k === "ltft1" ? 7 : 9].label}: ${v[k].toFixed(1)}%. Больше ±10% значит, что модель воздуха не совпадает с мотором.`]); });
   if (S.ap) {
     if (a.some(([c, t]) => c === "bad" && /Бедно/.test(t))) sayOnce("lean", "Бедная смесь на полном газу", "bad", 20000);
@@ -464,13 +471,16 @@ function gaugeClass(k, x) {
 function renderGauges() {
   $("gauges").innerHTML = ORDER.filter(p => S.supported.has(p)).map(p => { const d = PIDS[p];
     return `<div class="g na" id="g_${d.k}"><span class="k">${d.label}</span><span class="v"><b>—</b><small>${d.unit}</small></span></div>`; }).join("")
-    + `<div class="g na" id="g_voltage"><span class="k">Бортсеть</span><span class="v"><b>—</b><small>В</small></span></div>`;
+    + `<div class="g na" id="g_voltage"><span class="k">Бортсеть</span><span class="v"><b>—</b><small>В</small></span></div>`
+    + S.custom.map(c => `<div class="g na cust" id="g_c_${c.id}"><span class="k">${esc(c.name)} <button class="x" data-cdel="${c.id}" aria-label="Убрать ${esc(c.name)} с приборов">×</button></span><span class="v"><b>—</b><small>${esc(c.unit)}</small></span></div>`).join("");
 }
 function renderValues() {
   ORDER.forEach(p => { const d = PIDS[p], el = $("g_" + d.k); if (!el) return; const x = S.vals[d.k];
     el.className = "g " + gaugeClass(d.k, x); el.querySelector("b").textContent = x == null ? "—" : x.toFixed(d.d); });
   if (S.ap) ["rpm", "speed", "coolant", "timing", "lambda1", "lambda2"].forEach(k => { const x = S.vals[k], d = k.startsWith("lambda") ? 3 : k === "timing" ? 1 : 0; $("d_" + k).textContent = x == null ? "—" : x.toFixed(d); });
   const ve = $("g_voltage"); if (ve) { const x = S.vals.voltage; ve.className = "g " + gaugeClass("voltage", x); ve.querySelector("b").textContent = x == null ? "—" : x.toFixed(1); }
+  S.custom.forEach(c => { const el = $("g_c_" + c.id); if (!el) return; const x = S.vals["c_" + c.id];
+    el.className = "g cust " + (x == null ? "na" : c.warn != null && x > c.warn ? "bad" : ""); el.querySelector("b").textContent = x == null ? "—" : x.toFixed(c.d); });
 }
 function toggleRec() {
   if (S.rec) { $("btnRec").classList.remove("active"); $("btnRec").textContent = "Запись лога"; $("btnCsv").disabled = S.rec.length < 1; S.lastRows = S.rec; S.lastCsv = toCsv(S.rec); S.rec = null; return; }
@@ -509,7 +519,10 @@ async function readDtc() {
 function fmt(x, d) { return x == null || Number.isNaN(x) ? "" : (typeof x === "number" ? x.toFixed(d) : String(x)); }
 function toCsv(rows) {
   const dec = Object.fromEntries(ORDER.map(p => [PIDS[p].k, PIDS[p].d + 1])); dec.voltage = 2;
-  return [CSV_KEYS.join(",")].concat(rows.map(r => CSV_KEYS.map(k => k === "t" ? fmt(r.t, 3) : fmt(r[k], dec[k] ?? 0)).join(","))).join("\n");
+  const cust = S.custom.filter(c => rows.some(r => r["c_" + c.id] != null)), keys = CSV_KEYS.concat(cust.map(c => "c_" + c.id));
+  cust.forEach(c => dec["c_" + c.id] = c.d + 1);
+  const head = CSV_KEYS.concat(cust.map(c => c.name.replace(/[,\n]/g, " ")));
+  return [head.join(",")].concat(rows.map(r => keys.map(k => k === "t" ? fmt(r.t, 3) : fmt(r[k], dec[k] ?? 0)).join(","))).join("\n");
 }
 
 // ---------- human-readable summary: участки и разгоны ----------
@@ -832,7 +845,8 @@ function renderScn() {
     return `<div class="hit"><h4>${q}${miss && ser.length ? ` <span class="meta">без ответа ${miss} из ${rows.length}</span>` : ""}</h4>${refHtml}${body}</div>`;
   });
   const moving = sc.qs.filter(q => scnSeries(q).length);
-  el.innerHTML = `<p class="note">Голубым: обороты, педаль и ОЖ для сравнения. Вертикальные черты: смена шага сценария. Справа: от и до (десятичное · hex). Менялись ответы: ${moving.length} из ${sc.qs.length}.</p>` +
+  if (!S.scnRun) S.scnCand = scnCandidates();
+  el.innerHTML = (S.scnRun ? "" : renderCand()) + `<p class="note" style="margin-top:14px">Голубым: обороты, педаль и ОЖ для сравнения. Вертикальные черты: смена шага сценария. Справа: от и до (десятичное · hex). Менялись ответы: ${moving.length} из ${sc.qs.length}.</p>` +
     hits.filter((h, k) => scnSeries(sc.qs[k]).length).join("") +
     (moving.length < sc.qs.length ? `<p class="meta">Без изменений: ${sc.qs.filter(q => !moving.includes(q)).join(", ")}</p>` : "");
 }
@@ -848,6 +862,78 @@ async function scnSave() {
   const L = ["# АВТОМЕТР 2.0 · ЗАПИСЬ СЦЕНАРИЯ" + (S.demo ? " · ДЕМО (данные выдуманы)" : ""), ...scnSummary().map(x => "# " + x), head.join(",")];
   sc.rows.forEach(r => L.push([r.t, r.step, ...["rpm", "throttle", "coolant", "speed"].map(k => r.ref[k] == null ? "" : +(+r.ref[k]).toFixed(1)), ...sc.qs.map(q => r.raw[q] || "")].join(",")));
   await shareFile("m276_scenario_" + sc.target + "_" + sc.started.replace(/[:T]/g, "-").slice(0, 19) + ".csv", L.join("\n"), "text/csv");
+}
+
+// ---------- свои приборы: найденные скрытые параметры на главном экране ----------
+S.custom = []; S.scnCand = [];
+const esc = t => String(t).replace(/[&<>"]/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[ch]));
+function customRaw(c, hex) { const b = scnBytes(c.q, hex); if (!b || b.length <= c.i + (c.word ? 1 : 0)) return null; return c.word ? b[c.i] * 256 + b[c.i + 1] : b[c.i]; }
+async function customTick(fresh) {
+  if (!S.custom.length || S.scnRun) return;
+  const now = performance.now(); if (now - (S.custT || 0) < (S.pullMode ? 2000 : 1000)) return; S.custT = now;
+  const byT = {}; S.custom.forEach(c => (byT[c.target] ||= new Set()).add(c.q));
+  for (const [t, qs] of Object.entries(byT)) {
+    await setHeader(t);
+    for (const q of qs) { const r = classify(parseHex(await cmd(q, 1200).catch(() => "")), parseInt(q.slice(0, 2), 16));
+      S.custom.filter(c => c.target === t && c.q === q).forEach(c => { const raw = r.kind === "ok" ? customRaw(c, r.data) : null;
+        const x = raw == null ? null : raw * c.a + c.b; S.vals["c_" + c.id] = x; if (x != null) fresh["c_" + c.id] = x; }); }
+  }
+  await setHeader("7E0");
+}
+async function customSave() { await kvSet("custom", S.custom); renderGauges(); renderValues(); }
+function pearson(x, y) {
+  const p = x.map((v, i) => [v, y[i]]).filter(([a, b]) => a != null && b != null); if (p.length < 5) return 0;
+  const n = p.length, mx = p.reduce((s, q) => s + q[0], 0) / n, my = p.reduce((s, q) => s + q[1], 0) / n;
+  let sxy = 0, sxx = 0, syy = 0; p.forEach(([a, b]) => { sxy += (a - mx) * (b - my); sxx += (a - mx) ** 2; syy += (b - my) ** 2; });
+  return sxx && syy ? sxy / Math.sqrt(sxx * syy) : 0;
+}
+function linfit(x, y) {
+  const p = x.map((v, i) => [v, y[i]]).filter(([a, b]) => a != null && b != null), n = p.length;
+  const mx = p.reduce((s, q) => s + q[0], 0) / n, my = p.reduce((s, q) => s + q[1], 0) / n;
+  let sxy = 0, sxx = 0; p.forEach(([a, b]) => { sxy += (a - mx) * (b - my); sxx += (a - mx) ** 2; });
+  const a = sxx ? sxy / sxx : 1; return { a, b: my - a * mx };
+}
+const rnd = (x, d = 4) => +x.toFixed(d);
+// Автоподбор: каждый менявшийся байт сравниваем с оборотами, педалью, ОЖ и временем и предлагаем, на что он похож
+function scnCandidates() {
+  const sc = S.scn, rows = sc.rows, ref = k => rows.map(r => r.ref[k] ?? null), t = rows.map(r => r.t); let out = [];
+  const coolRange = (a => a.length ? Math.max(...a) - Math.min(...a) : 0)(ref("coolant").filter(x => x != null));
+  for (const q of sc.qs) for (const s of scnSeries(q)) {
+    const nn = s.v.filter(x => x != null), lo = Math.min(...nn), hi = Math.max(...nn);
+    const rr = pearson(s.v, ref("rpm")), rt = pearson(s.v, ref("throttle")), rc = coolRange >= 3 ? pearson(s.v, ref("coolant")) : 0, rtime = pearson(s.v, t);
+    let c;
+    if (Math.abs(rr) >= 0.9 && Math.abs(rr) >= Math.abs(rt)) { const f = linfit(s.v, ref("rpm")), same = Math.abs(rr) >= 0.98;
+      c = { kind: "rpm", score: Math.abs(rr), guess: same ? "Похоже на обороты" : "Двигается вместе с оборотами", why: same ? `совпадает с оборотами на ${Math.round(Math.abs(rr) * 100)}%. Обороты уже есть в OBD, так что это скорее проверка, что поиск работает.` : `похоже на обороты на ${Math.round(Math.abs(rr) * 100)}%, но не один в один. Это может быть угол зажигания, нагрузка или фаза. Выведи сырое значение и посмотри в поездке.`,
+        name: same ? "Обороты (блок " + sc.target + ")" : `${q} ${s.label}`, unit: same ? "об/мин" : "", a: same ? f.a : 1, b: same ? f.b : 0, d: 0 }; }
+    else if (Math.abs(rt) >= 0.9) { const f = linfit(s.v, ref("throttle")), same = Math.abs(rt) >= 0.98;
+      c = { kind: "thr", score: Math.abs(rt), guess: same ? "Похоже на педаль или дроссель" : "Двигается вместе с педалью", why: same ? `совпадает с дросселем на ${Math.round(Math.abs(rt) * 100)}%. Может оказаться положением педали или запросом момента.` : `похоже на дроссель на ${Math.round(Math.abs(rt) * 100)}%, но не один в один. Это может быть запрос момента, угол или нагрузка. Выведи сырое значение и посмотри в поездке.`,
+        name: same ? "Педаль/дроссель (блок " + sc.target + ")" : `${q} ${s.label}`, unit: same ? "%" : "", a: same ? f.a : 1, b: same ? f.b : 0, d: 0 }; }
+    else if (!s.word && (rc >= 0.85 || (rtime >= 0.85 && hi - lo >= 3))) { c = { kind: "temp", score: Math.max(rc, rtime), guess: "Похоже на температуру", why: `${rc >= 0.85 ? "растёт вместе с ОЖ" : "плавно растёт всю запись"}. Предлагаю обычную для Mercedes формулу «байт − 40» °C. Сверим с Xentry или термометром.`, name: sc.target === "7E1" ? "АКПП °C" : "Темп. " + q, unit: "°C", a: 1, b: -40, d: 0, warn: sc.target === "7E1" ? 120 : null }; }
+    else { const sc2 = Math.max(Math.abs(rr), Math.abs(rt), Math.abs(rc), Math.abs(rtime)); if (sc2 < 0.5 && hi - lo < 3) continue;
+      c = { kind: "unk", score: sc2 * 0.5, guess: "Меняется, смысл пока не ясен", why: "на обороты, педаль и прогрев не похож. Можно вывести сырое значение и посмотреть в поездке, когда оно двигается.", name: `${q} ${s.label}`, unit: "", a: 1, b: 0, d: 0 }; }
+    out.push({ ...c, target: sc.target, q, i: s.i, word: !!s.word, label: s.label, lo, hi, a: rnd(c.a), b: rnd(c.b, 2) });
+  }
+  const order = { temp: 0, unk: 1, thr: 2, rpm: 3 };
+  // если два байта читаются как одно 16-битное число, отдельные байты не предлагаем
+  const words = out.filter(c => c.word);
+  out = out.filter(c => c.word || !words.some(w => w.q === c.q && (w.i === c.i || w.i + 1 === c.i)));
+  return out.sort((x, y) => order[x.kind] - order[y.kind] || y.score - x.score).slice(0, 12);
+}
+function renderCand() {
+  const c = S.scnCand; if (!c.length) return `<p class="note">Автоподбор: ни один байт не похож на что-то полезное. Попробуй другой сценарий, например «Прогрев».</p>`;
+  return `<h3 style="margin:14px 0 4px">Кандидаты на главный экран</h3><p class="note">Автометр сравнил каждый менявшийся байт с оборотами, педалью, ОЖ и временем. Выбери, что вывести на приборы. Название можно поменять. Формула — моя догадка, после первой поездки уточним.</p>` +
+    c.map((x, k) => { const has = S.custom.some(m => m.target === x.target && m.q === x.q && m.i === x.i && m.word === x.word);
+      return `<div class="cand"><div><div class="ttl">${x.guess}</div><div class="meta">${x.target} · ${x.q} · ${x.label} · сейчас ${rnd(x.lo * x.a + x.b, 1)}…${rnd(x.hi * x.a + x.b, 1)} ${x.unit} · формула: ${x.a === 1 && x.b === 0 ? "как есть" : `${x.word ? "число" : "байт"} × ${x.a} ${x.b < 0 ? "−" : "+"} ${Math.abs(x.b)}`}</div></div>
+        <button data-cadd="${k}" ${has ? "disabled" : ""}>${has ? "Уже на приборах" : "На приборы"}</button>
+        <div class="why">Почему: ${x.why}</div>
+        <div class="row" style="grid-column:1/-1"><input type="text" id="cn_${k}" value="${esc(x.name)}" aria-label="Название прибора">${x.kind === "temp" ? `<input type="text" class="num" id="cw_${k}" value="${x.warn ?? ""}" inputmode="numeric" aria-label="Порог предупреждения" placeholder="порог">` : ""}</div></div>`; }).join("");
+}
+async function candAdd(k) {
+  const x = S.scnCand[k]; if (!x) return;
+  const name = ($("cn_" + k)?.value || x.name).trim().slice(0, 30), w = parseFloat($("cw_" + k)?.value);
+  S.custom.push({ id: Date.now().toString(36), name, unit: x.unit, target: x.target, q: x.q, i: x.i, word: x.word, a: x.a, b: x.b, d: x.d, warn: Number.isFinite(w) ? w : null });
+  await customSave(); renderScn();
+  $("scnProg").textContent = `«${name}» добавлен на приборы. Включи «Старт опроса», он будет обновляться раз в секунду.`;
 }
 
 // ---------- one-button session: everything Claude needs in one file ----------
@@ -1232,6 +1318,8 @@ async function renderReports() {
     : `<p class="note">Пока пусто. Здесь появятся отчёты сессий и поездок автопилота.</p>`;
 }
 document.addEventListener("click", async e => {
+  const ca = e.target?.dataset?.cadd; if (ca != null) { await candAdd(+ca); return; }
+  const cd = e.target?.dataset?.cdel; if (cd) { const c = S.custom.find(x => x.id === cd); if (c && confirm(`Убрать «${c.name}» с приборов?`)) { S.custom = S.custom.filter(x => x.id !== cd); delete S.vals["c_" + cd]; await customSave(); if (S.scn) renderScn(); } return; }
   const del = e.target?.dataset?.del;
   if (del) { if (confirm("Удалить отчёт " + del.slice(0, 16).replace("T", " ") + "?")) { await dbDo("reports", "readwrite", s => s.delete(del)).catch(() => {}); renderReports(); } return; }
   const id = e.target?.dataset?.rep; if (!id) return;
@@ -1255,6 +1343,7 @@ function startApDemo() {
 
 // ---------- startup: подхватить знакомый адаптер без нажатий, восстановить оборванную поездку ----------
 async function boot() {
+  S.custom = (await kvGet("custom")) || []; renderGauges();
   await recoverCrashed(); renderReports();
   S.knownDev = await knownDevice();
   if (S.knownDev && !S.connected && !S.demo) { log("Знакомый адаптер " + (S.knownDev.name || "") + ", подключаюсь сам"); tryAutoConnect(); }
