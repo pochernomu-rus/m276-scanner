@@ -311,7 +311,6 @@ const UART_SERVICES = [
 ].map(u => typeof u === "number" ? "0000" + u.toString(16).padStart(4, "0") + "-0000-1000-8000-00805f9b34fb" : u); // полные UUID строкой: Bluefy отказывает (код 2) на короткие числа
 async function connect() {
   if (!navigator.bluetooth) { setStatus("нет Bluetooth в браузере", ""); log("Web Bluetooth недоступен. На iPhone откройте страницу в браузере Bluefy."); return; }
-  const errText = e => [e?.name, e?.message].filter(Boolean).join(": ") || String(e);
   let dev;
   try {
     // показываем все BLE-устройства: имена у адаптеров разные (OBDLink, Vgate, IOS-Vlink, OBDII…)
@@ -327,13 +326,26 @@ async function connect() {
   try { await connectDevice(dev); } catch (e) { setStatus("не подключено"); log("Ошибка подключения: " + errText(e)); }
 }
 function onData(s) { S.buf += s; if (S.buf.includes(">") && S.waiter) { const r = S.buf; S.buf = ""; const w = S.waiter; S.waiter = null; w(r); } }
+const errText = e => [e?.name, e?.message].filter(Boolean).join(": ") || String(e);
+const withTimeout = (p, ms, what) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error("нет ответа за " + ms / 1000 + " с: " + what)), ms))]);
+// Способы записи по очереди: первый, что сработал, запоминаем (Bluefy отказывает в некоторых без текста ошибки)
+const WRITE_WAYS = [
+  ["с подтверждением", c => c.properties.write && c.writeValueWithResponse, (c, d) => c.writeValueWithResponse(d)],
+  ["без подтверждения", c => c.properties.writeWithoutResponse && c.writeValueWithoutResponse, (c, d) => c.writeValueWithoutResponse(d)],
+  ["writeValue", c => c.writeValue, (c, d) => c.writeValue(d)],
+];
+async function writeChunk(chunk) {
+  if (S.writeWay) return withTimeout(S.writeWay[2](S.tx, chunk), 3000, "запись " + S.writeWay[0]);
+  let last;
+  for (const w of WRITE_WAYS.filter(w => w[1](S.tx))) {
+    try { await withTimeout(w[2](S.tx, chunk), 3000, "запись " + w[0]); S.writeWay = w; log("Запись в адаптер: " + w[0]); return; }
+    catch (e) { last = e; log("Запись " + w[0] + " не прошла: " + errText(e)); }
+  }
+  throw new Error("адаптер не принимает команды (" + errText(last) + ")");
+}
 async function writeRaw(str) {
   const data = new TextEncoder().encode(str);
-  for (let i = 0; i < data.length; i += 20) {
-    const chunk = data.slice(i, i + 20);
-    if (S.txNoResp && S.tx.writeValueWithoutResponse) await S.tx.writeValueWithoutResponse(chunk);
-    else if (S.tx.writeValueWithResponse) await S.tx.writeValueWithResponse(chunk); else await S.tx.writeValue(chunk);
-  }
+  for (let i = 0; i < data.length; i += 20) await writeChunk(data.slice(i, i + 20));
 }
 // Serialized command: returns raw text up to the '>' prompt
 function cmd(c, timeout = 2500) {
@@ -1140,6 +1152,7 @@ async function findUart(gatt) {
     if (rx && tx) {
       S.rx = rx; S.tx = tx; S.txNoResp = !tx.properties.write; S.channel = "сервис " + uuidShort(svc.uuid);
       log(`Канал адаптера: сервис ${uuidShort(svc.uuid)}, чтение ${uuidShort(rx.uuid)}, запись ${uuidShort(tx.uuid)}${S.txNoResp ? " (без подтверждения)" : ""}`);
+      log("Свойства: " + found[found.length - 1]);
       return;
     }
   }
@@ -1147,13 +1160,16 @@ async function findUart(gatt) {
   throw new Error("у адаптера не найден канал ELM327. Пришли скрин консоли в чат");
 }
 async function connectDevice(dev) {
-  S.dev = dev; S.adapterId = null;
+  S.dev = dev; S.adapterId = null; S.writeWay = null;
   if (!dev._m276) { dev.addEventListener("gattserverdisconnected", onDisconnect); dev._m276 = true; }
   setStatus("подключение…");
   const gatt = await dev.gatt.connect();
   await findUart(gatt);
   if (!S.rx._m276) { S.rx.addEventListener("characteristicvaluechanged", e => onData(new TextDecoder().decode(e.target.value))); S.rx._m276 = true; }
-  await S.rx.startNotifications();
+  log("Включаю приём ответов…");
+  try { await withTimeout(S.rx.startNotifications(), 5000, "включение приёма"); log("Приём ответов включён"); }
+  catch (e) { log("Приём ответов: " + errText(e) + ". Пробую дальше"); }
+  log("Настраиваю адаптер (ATZ, ATE0…)");
   S.hdr = null; await initAdapter(); S.hdr = "7E0";
   S.connected = true; setStatus("подключено", "on"); enable(true);
 }
@@ -1168,7 +1184,7 @@ async function knownDevice() {
 }
 async function tryAutoConnect() {
   const d = S.dev || await knownDevice(); if (!d) return false;
-  try { await connectDevice(d); return true; } catch (e) { log("Автоподключение: " + e.message); return false; }
+  try { await connectDevice(d); return true; } catch (e) { log("Автоподключение: " + errText(e)); return false; }
 }
 
 // ---------- TCU (АКПП) parameters: found once, then read every 30 s ----------
