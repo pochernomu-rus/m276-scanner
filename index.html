@@ -308,7 +308,7 @@ const UART_SERVICES = [
   0x18F0,                                   // часть китайских ELM327 BLE
   "6e400001-b5a3-f393-e0a9-e50e24dcca9e",   // Nordic UART
   0xFFB0, 0xFFC0, 0xFFD0,
-];
+].map(u => typeof u === "number" ? "0000" + u.toString(16).padStart(4, "0") + "-0000-1000-8000-00805f9b34fb" : u); // полные UUID строкой: Bluefy отказывает (код 2) на короткие числа
 async function connect() {
   if (!navigator.bluetooth) { setStatus("нет Bluetooth в браузере", ""); log("Web Bluetooth недоступен. На iPhone откройте страницу в браузере Bluefy."); return; }
   const errText = e => [e?.name, e?.message].filter(Boolean).join(": ") || String(e);
