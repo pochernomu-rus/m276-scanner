@@ -121,6 +121,12 @@ input[type=text] { flex: 1; min-width: 0; font: 14px var(--f-mono); padding: 10p
     <button id="btnDisconnect" disabled>Отключить</button>
   </div>
 
+  <section>
+    <h2>Комментарий к записи</h2>
+    <input type="text" id="note" maxlength="200" placeholder="например: Vgate 2S, ХХ прогретый, кондиционер выкл" autocomplete="off" aria-label="Комментарий к записи" style="width:100%">
+    <p class="note">Попадёт в каждый отчёт и CSV, снятые, пока поле заполнено. Адаптер (имя Bluetooth и ответы ATI, AT@1, STDI) пишется в файл сам.</p>
+  </section>
+
   <section class="session">
     <h2>Сценарии сканирования</h2>
     <div class="scen">
@@ -335,6 +341,8 @@ async function initAdapter() {
   for (const [c, t] of [["ATZ", 5000], ["ATE0"], ["ATL0"], ["ATS0"], ["ATH0"], ["ATCAF1"], ["ATSP6"], ["ATSH7E0"], ["ATAT1"]]) {
     try { const r = await cmd(c, t); log(c + " → " + r.replace(/\s+/g, " ")); } catch (e) { log(e.message); }
   }
+  S.adapterId = await readAdapterId();
+  log("Адаптер: " + adapterIdText(S.adapterId));
   await detectSupported();
 }
 
@@ -489,7 +497,7 @@ function toggleRec() {
 }
 async function saveCsv() {
   const name = "m276_" + new Date().toISOString().replace(/[:T]/g, "-").slice(0, 19) + ".csv";
-  await shareFile(name, S.lastCsv, "text/csv");
+  await shareFile(name, csvHead().concat(S.lastCsv).join("\n"), "text/csv");
 }
 
 // ---------- info & DTC ----------
@@ -550,9 +558,10 @@ function buildReportText(r, rows) {
   L.push("АВТОМЕТР 2.0 · ОТЧЁТ СЕССИИ" + (r.demo ? " · ДЕМО (данные выдуманы)" : ""));
   L.push("=".repeat(44));
   L.push(`Машина:      ${r.car}`, `Начало:      ${r.started}`, `Конец:       ${r.finished}`, `Версия:      сканер ${r.app}`, `Режим:       ${r.auto ? "автопилот" : "ручная сессия"}`);
+  L.push(`Комментарий: ${r.comment || "—"}`);
   if (r.note) L.push(`Примечание:  ${r.note}`);
   L.push("");
-  L.push("АДАПТЕР", `  ${r.adapter.device} · ${r.adapter.id} · напряжение ${r.adapter.voltage} · протокол ${r.adapter.protocol}`, "");
+  L.push("АДАПТЕР", `  ${r.adapter.ident || r.adapter.device + " · " + r.adapter.id}`, `  напряжение ${r.adapter.voltage} · протокол ${r.adapter.protocol}`, "");
   L.push("ЭБУ ДВИГАТЕЛЯ", `  VIN:            ${r.ecu.vin}`, `  Calibration ID: ${r.ecu.calibrationId}`, `  CVN:            ${r.ecu.cvn}`, "");
   L.push("ОШИБКИ", `  в начале: сохранённые ${r.dtc.atStart.stored}; ожидающие ${r.dtc.atStart.pending}`, `  в конце:  сохранённые ${r.dtc.atEnd.stored}; ожидающие ${r.dtc.atEnd.pending}`, "");
   L.push("СТОП-КАДР ОШИБКИ (в начале)", ffText(r.freezeFrame), "", "ГОТОВНОСТЬ МОНИТОРОВ (в начале)", rdyText(r.readiness), "");
@@ -859,7 +868,7 @@ function scnSummary() {
 async function scnSave() {
   const sc = S.scn; if (!sc?.rows.length) return;
   const head = ["t", "step", "rpm", "throttle", "coolant", "speed", ...sc.qs];
-  const L = ["# АВТОМЕТР 2.0 · ЗАПИСЬ СЦЕНАРИЯ" + (S.demo ? " · ДЕМО (данные выдуманы)" : ""), ...scnSummary().map(x => "# " + x), head.join(",")];
+  const L = ["# АВТОМЕТР 2.0 · ЗАПИСЬ СЦЕНАРИЯ" + (S.demo ? " · ДЕМО (данные выдуманы)" : ""), ...csvHead(), ...scnSummary().map(x => "# " + x), head.join(",")];
   sc.rows.forEach(r => L.push([r.t, r.step, ...["rpm", "throttle", "coolant", "speed"].map(k => r.ref[k] == null ? "" : +(+r.ref[k]).toFixed(1)), ...sc.qs.map(q => r.raw[q] || "")].join(",")));
   await shareFile("m276_scenario_" + sc.target + "_" + sc.started.replace(/[:T]/g, "-").slice(0, 19) + ".csv", L.join("\n"), "text/csv");
 }
@@ -942,10 +951,23 @@ async function shareFile(name, text, type) {
   try { if (navigator.canShare?.({ files: [file] })) { await navigator.share({ files: [file], title: name }); return; } } catch (e) { if (e.name === "AbortError") return; }
   const a = document.createElement("a"); a.href = URL.createObjectURL(file); a.download = name; document.body.appendChild(a); a.click(); a.remove();
 }
-async function readAdapter() {
-  const q = async c => { try { return (await cmd(c, 3000)).replace(/\s+/g, " ").trim(); } catch (e) { return e.message; } };
-  return { id: await q("ATI"), device: await q("STDI"), voltage: await q("ATRV"), protocol: await q("ATDPN") };
+const adQ = async c => { try { return (await cmd(c, 3000)).replace(/\s+/g, " ").trim(); } catch (e) { return e.message; } };
+async function readAdapterId() {
+  return { ble: S.demo ? "демо" : (S.dev?.name || "без имени"), channel: S.channel || "", ati: await adQ("ATI"), at1: await adQ("AT@1"), stdi: await adQ("STDI") };
 }
+const adapterIdText = a => a ? `Bluetooth «${a.ble}»${a.channel ? " (" + a.channel + ")" : ""} · ATI ${a.ati} · AT@1 ${a.at1} · STDI ${a.stdi}` : "не прочитан";
+async function readAdapter() {
+  if (!S.adapterId) S.adapterId = await readAdapterId();
+  return { id: S.adapterId.ati, device: S.adapterId.stdi, ident: adapterIdText(S.adapterId), voltage: await adQ("ATRV"), protocol: await adQ("ATDPN") };
+}
+// ---------- comment attached to logs and reports ----------
+const noteText = () => ($("note")?.value || "").trim().replace(/\s+/g, " ");
+function withComment(text, c) {
+  const line = "Комментарий: " + (c || "—");
+  if (/^Комментарий: .*$/m.test(text)) return text.replace(/^Комментарий: .*$/m, line);
+  return text.replace(/^(Режим: .*)$/m, "$1\n" + line);
+}
+function csvHead() { return ["# Комментарий: " + (noteText() || "—"), "# Адаптер: " + adapterIdText(S.adapterId), "# Записано: " + new Date().toISOString()]; }
 async function sessionClick() {
   const btn = $("btnSession");
   btn.disabled = true;
@@ -983,7 +1005,7 @@ async function sessionClick() {
 }
 
 // ---------- read-only console ----------
-const ALLOW = /^(AT(?!PP|MA)[A-Z0-9 .]*|ST(DI|I|MA|PRS)[A-Z0-9 ]*|01[0-9A-F]{2,12}|02[0-9A-F]{4}|06[0-9A-F]{2}|1A[0-9A-F]{2}|21[0-9A-F]{2}|3E00|0[379]([0-9A-F]{2})?|22[0-9A-F]{4,12}|1003)$/i;
+const ALLOW = /^(AT@1|AT(?!PP|MA)[A-Z0-9 .]*|ST(DI|I|MA|PRS)[A-Z0-9 ]*|01[0-9A-F]{2,12}|02[0-9A-F]{4}|06[0-9A-F]{2}|1A[0-9A-F]{2}|21[0-9A-F]{2}|3E00|0[379]([0-9A-F]{2})?|22[0-9A-F]{4,12}|1003)$/i;
 async function sendConsole() {
   const c = $("cmd").value.trim().toUpperCase().replace(/\s+/g, ""); if (!c) return;
   if (!ALLOW.test(c)) { log("Заблокировано: " + c + ". Разрешены только запросы чтения."); return; }
@@ -1043,14 +1065,14 @@ function demoReply(c) {
     return "41" + pids.map(p => hex2(p) + (demoByte(p, s) || []).map(hex2).join("")).join(""); }
   if (c === "0902") return "014\r0:490201574444\r1:32303430303030\r2:41303030303030";
   if (c === "0904") return "NO DATA";
-  if (c === "ATI") return "ELM327 v1.4b"; if (c === "STDI") return "OBDLink CX (демо)"; if (c === "ATRV") return "14.2V"; if (c === "ATDPN") return "A6";
+  if (c === "ATI") return "ELM327 v1.4b"; if (c === "AT@1") return "OBDLink CX (демо)"; if (c === "STDI") return "OBDLink CX (демо)"; if (c === "ATRV") return "14.2V"; if (c === "ATDPN") return "A6";
   if (c === "06A0") return "46A0FE000000";
   if (/^06A[2-7]$/.test(c)) { const cyl = parseInt(c[3], 16) - 1, mid = c.slice(2), cur = cyl === 3 ? 4 : 0, avg = cyl === 3 ? 1 : 0;
     return "46" + mid + "0B24" + hex2(avg >> 8) + hex2(avg & 255) + "0000FFFF" + mid + "0C24" + hex2(cur >> 8) + hex2(cur & 255) + "0000FFFF"; }
   if (c === "03") return "4300"; if (c === "07") return "4700";
   return "OK";
 }
-function startDemo() { S.demo = true; S.supported = new Set(ORDER); setStatus("демо-режим", "demo"); enable(true); renderGauges(); log("Демо: данные выдуманы, чтобы показать работу страницы. Это не твоя машина."); startLive(); }
+function startDemo() { S.demo = true; S.adapterId = null; S.supported = new Set(ORDER); setStatus("демо-режим", "demo"); enable(true); renderGauges(); log("Демо: данные выдуманы, чтобы показать работу страницы. Это не твоя машина."); startLive(); }
 
 // ---------- storage: IndexedDB (лог поездки не теряется при обрыве или перезагрузке) ----------
 const DB = { db: null };
@@ -1107,7 +1129,7 @@ async function findUart(gatt) {
     const rx = chars.find(c => c.properties.notify) || chars.find(c => c.properties.indicate);
     const tx = chars.find(c => c.properties.write && c === rx) || chars.find(c => c.properties.write) || chars.find(c => c.properties.writeWithoutResponse);
     if (rx && tx) {
-      S.rx = rx; S.tx = tx; S.txNoResp = !tx.properties.write;
+      S.rx = rx; S.tx = tx; S.txNoResp = !tx.properties.write; S.channel = "сервис " + uuidShort(svc.uuid);
       log(`Канал адаптера: сервис ${uuidShort(svc.uuid)}, чтение ${uuidShort(rx.uuid)}, запись ${uuidShort(tx.uuid)}${S.txNoResp ? " (без подтверждения)" : ""}`);
       return;
     }
@@ -1116,7 +1138,7 @@ async function findUart(gatt) {
   throw new Error("у адаптера не найден канал ELM327. Пришли скрин консоли в чат");
 }
 async function connectDevice(dev) {
-  S.dev = dev;
+  S.dev = dev; S.adapterId = null;
   if (!dev._m276) { dev.addEventListener("gattserverdisconnected", onDisconnect); dev._m276 = true; }
   setStatus("подключение…");
   const gatt = await dev.gatt.connect();
@@ -1170,7 +1192,7 @@ async function readTcuValues(cfg) {
 // ---------- report shared by the manual session and the autopilot ----------
 function makeReport(sess, rows, note) {
   const report = {
-    format: "m276-scanner-report", app: APP, demo: S.demo, auto: !!sess.auto, note: note || "",
+    format: "m276-scanner-report", app: APP, demo: S.demo, auto: !!sess.auto, note: note || "", comment: noteText(),
     car: "Mercedes C 300 4MATIC W204, M276 DE35",
     started: sess.started, finished: new Date().toISOString(),
     adapter: sess.adapter || {}, ecu: { vin: S.info.vin, calibrationId: S.info.calibrationId, cvn: S.info.cvn },
@@ -1182,7 +1204,7 @@ function makeReport(sess, rows, note) {
   const pulls = segments(rows).filter(s => s.phase === "разгон" && s.end - s.start >= 1).length;
   const minutes = rows.length ? rows[rows.length - 1].t / 60 : 0;
   const name = "m276_session_" + report.finished.replace(/[:T]/g, "-").slice(0, 19) + ".txt";
-  return { id: report.finished, name, text: buildReportText(report, rows), summary: `${minutes.toFixed(0)} мин · разгонов ${pulls} · строк ${rows.length}${note ? " · " + note : ""}`, minutes, pulls };
+  return { id: report.finished, name, comment: report.comment, text: buildReportText(report, rows), summary: `${minutes.toFixed(0)} мин · разгонов ${pulls} · строк ${rows.length}${note ? " · " + note : ""}`, minutes, pulls };
 }
 function tcuText(r) {
   const L = [];
@@ -1314,7 +1336,7 @@ async function apTcuTick() {
 // ---------- saved reports ----------
 async function renderReports() {
   const list = (await allReports()).sort((a, b) => b.id.localeCompare(a.id)).slice(0, 15);
-  $("reports").innerHTML = list.length ? list.map(r => `<div class="rep"><div><b>${r.id.slice(0, 16).replace("T", " ")}</b><span class="meta"> · ${r.summary}</span></div><div class="row"><button data-rep="${r.id}">Отправить</button><button data-del="${r.id}">Удалить</button></div></div>`).join("")
+  $("reports").innerHTML = list.length ? list.map(r => `<div class="rep"><div><b>${r.id.slice(0, 16).replace("T", " ")}</b><span class="meta"> · ${r.summary}</span>${r.comment ? `<div class="meta">💬 ${esc(r.comment)}</div>` : ""}</div><div class="row"><button data-note="${r.id}">Коммент.</button><button data-rep="${r.id}">Отправить</button><button data-del="${r.id}">Удалить</button></div></div>`).join("")
     : `<p class="note">Пока пусто. Здесь появятся отчёты сессий и поездок автопилота.</p>`;
 }
 document.addEventListener("click", async e => {
@@ -1322,8 +1344,12 @@ document.addEventListener("click", async e => {
   const cd = e.target?.dataset?.cdel; if (cd) { const c = S.custom.find(x => x.id === cd); if (c && confirm(`Убрать «${c.name}» с приборов?`)) { S.custom = S.custom.filter(x => x.id !== cd); delete S.vals["c_" + cd]; await customSave(); if (S.scn) renderScn(); } return; }
   const del = e.target?.dataset?.del;
   if (del) { if (confirm("Удалить отчёт " + del.slice(0, 16).replace("T", " ") + "?")) { await dbDo("reports", "readwrite", s => s.delete(del)).catch(() => {}); renderReports(); } return; }
+  const nid = e.target?.dataset?.note;
+  if (nid) { const r = (await allReports()).find(x => x.id === nid); if (!r) return;
+    const c = prompt("Комментарий к отчёту " + nid.slice(0, 16).replace("T", " "), r.comment || ""); if (c == null) return;
+    r.comment = c.trim().replace(/\s+/g, " "); r.text = withComment(r.text, r.comment); await saveReport(r); renderReports(); return; }
   const id = e.target?.dataset?.rep; if (!id) return;
-  const r = (await allReports()).find(x => x.id === id); if (r) await shareFile(r.name, r.text, "text/plain");
+  const r = (await allReports()).find(x => x.id === id); if (r) await shareFile(r.name, withComment(r.text, r.comment), "text/plain");
 });
 async function recoverCrashed() {
   const cur = await kvGet("current"); if (!cur?.rows?.length) return;
@@ -1333,7 +1359,7 @@ async function recoverCrashed() {
 
 // ---------- autopilot demo: ignition, engine start and stop on a timeline ----------
 function startApDemo() {
-  unlockAudio(); S.demo = true; S.supported = new Set(ORDER); setStatus("демо-автопилот", "demo"); enable(true); renderGauges();
+  unlockAudio(); S.demo = true; S.adapterId = null; S.supported = new Set(ORDER); setStatus("демо-автопилот", "demo"); enable(true); renderGauges();
   S.demoEng = { ign: false, run: false };
   log("Демо автопилота: данные выдуманы. Зажигание через 3 с, мотор после проверки, поездка 40 с, потом мотор глушится.");
   setTimeout(() => { if (S.demoEng) S.demoEng.ign = true; }, 3000);
@@ -1361,9 +1387,11 @@ async function apButton() {
 }
 
 // ---------- wiring ----------
+try { $("note").value = localStorage.getItem("m276_note") || ""; } catch (e) {}
+$("note").oninput = () => { try { localStorage.setItem("m276_note", $("note").value); } catch (e) {} };
 $("btnConnect").onclick = connect;
 $("btnDemo").onclick = startDemo;
-$("btnDisconnect").onclick = async () => { await apQuit(); stopLive(); if (S.dev?.gatt?.connected) S.dev.gatt.disconnect(); S.demo = false; S.session = null; $("btnSession").textContent = "Начать сессию"; $("sessInfo").textContent = ""; enable(false); setStatus("не подключено"); };
+$("btnDisconnect").onclick = async () => { await apQuit(); stopLive(); if (S.dev?.gatt?.connected) S.dev.gatt.disconnect(); S.demo = false; S.adapterId = null; S.session = null; $("btnSession").textContent = "Начать сессию"; $("sessInfo").textContent = ""; enable(false); setStatus("не подключено"); };
 $("btnLive").onclick = () => S.live ? stopLive() : startLive();
 $("btnRec").onclick = toggleRec;
 $("btnCsv").onclick = saveCsv;
