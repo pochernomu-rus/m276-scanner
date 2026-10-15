@@ -311,11 +311,20 @@ const UART_SERVICES = [
 ];
 async function connect() {
   if (!navigator.bluetooth) { setStatus("нет Bluetooth в браузере", ""); log("Web Bluetooth недоступен. На iPhone откройте страницу в браузере Bluefy."); return; }
+  const errText = e => [e?.name, e?.message].filter(Boolean).join(": ") || String(e);
+  let dev;
   try {
     // показываем все BLE-устройства: имена у адаптеров разные (OBDLink, Vgate, IOS-Vlink, OBDII…)
-    const dev = await navigator.bluetooth.requestDevice({ acceptAllDevices: true, optionalServices: UART_SERVICES });
-    await connectDevice(dev);
-  } catch (e) { setStatus("не подключено"); log("Ошибка подключения: " + e.message); }
+    dev = await navigator.bluetooth.requestDevice({ acceptAllDevices: true, optionalServices: UART_SERVICES });
+  } catch (e) {
+    if (e?.name === "NotFoundError" && /cancel/i.test(e.message || "")) { setStatus("не подключено"); log("Выбор адаптера отменён"); return; }
+    log("Список всех устройств не открылся (" + errText(e) + "), ищу по известным адаптерам");
+    try {
+      const filters = UART_SERVICES.map(u => ({ services: [u] })).concat(["OBD", "Vgate", "vLink", "V-LINK", "IOS-Vlink", "iCar", "Android-Vlink"].map(n => ({ namePrefix: n })));
+      dev = await navigator.bluetooth.requestDevice({ filters, optionalServices: UART_SERVICES });
+    } catch (e2) { setStatus("не подключено"); log("Ошибка подключения: " + errText(e2)); return; }
+  }
+  try { await connectDevice(dev); } catch (e) { setStatus("не подключено"); log("Ошибка подключения: " + errText(e)); }
 }
 function onData(s) { S.buf += s; if (S.buf.includes(">") && S.waiter) { const r = S.buf; S.buf = ""; const w = S.waiter; S.waiter = null; w(r); } }
 async function writeRaw(str) {
