@@ -325,6 +325,12 @@ async function connect() {
   }
   try { await connectDevice(dev); } catch (e) { setStatus("не подключено"); log("Ошибка подключения: " + errText(e)); }
 }
+function onRx(e) {
+  const v = e?.target?.value || S.rx?.value; if (!v) { log("Пришло событие от адаптера без данных"); return; }
+  const s = new TextDecoder().decode(v); S.rxBytes = (S.rxBytes || 0) + v.byteLength;
+  if (S.rxBytes === v.byteLength) log("Первые данные от адаптера: " + JSON.stringify(s).slice(0, 40));
+  onData(s);
+}
 function onData(s) { S.buf += s; if (S.buf.includes(">") && S.waiter) { const r = S.buf; S.buf = ""; const w = S.waiter; S.waiter = null; w(r); } }
 const errText = e => [e?.name, e?.message].filter(Boolean).join(": ") || String(e);
 const withTimeout = (p, ms, what) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error("нет ответа за " + ms / 1000 + " с: " + what)), ms))]);
@@ -342,6 +348,16 @@ async function writeChunk(chunk) {
     catch (e) { last = e; log("Запись " + w[0] + " не прошла: " + errText(e)); }
   }
   throw new Error("адаптер не принимает команды (" + errText(last) + ")");
+}
+// Пробуем каждый способ записи командой ATI и оставляем тот, на который адаптер ответил
+async function probeWrite() {
+  for (const w of WRITE_WAYS.filter(w => w[1](S.tx))) {
+    S.writeWay = w;
+    try { const r = await cmd("ATI", 3000); log("Запись " + w[0] + ": адаптер ответил «" + r.replace(/\s+/g, " ").trim() + "»"); return; }
+    catch (e) { log("Запись " + w[0] + ": ответа нет (" + errText(e) + ")"); }
+  }
+  S.writeWay = null;
+  log(S.rxBytes ? "Адаптер что-то присылает, но без конца ответа «>». Пришли скрин консоли" : "От адаптера не пришло ни байта ни на один способ записи. Пришли скрин консоли");
 }
 async function writeRaw(str) {
   const data = new TextEncoder().encode(str);
@@ -1165,10 +1181,12 @@ async function connectDevice(dev) {
   setStatus("подключение…");
   const gatt = await dev.gatt.connect();
   await findUart(gatt);
-  if (!S.rx._m276) { S.rx.addEventListener("characteristicvaluechanged", e => onData(new TextDecoder().decode(e.target.value))); S.rx._m276 = true; }
+  if (!S.rx._m276) { S.rx.addEventListener("characteristicvaluechanged", onRx); S.rx._m276 = true; }
+  S.rxBytes = 0;
   log("Включаю приём ответов…");
   try { await withTimeout(S.rx.startNotifications(), 5000, "включение приёма"); log("Приём ответов включён"); }
   catch (e) { log("Приём ответов: " + errText(e) + ". Пробую дальше"); }
+  await probeWrite();
   log("Настраиваю адаптер (ATZ, ATE0…)");
   S.hdr = null; await initAdapter(); S.hdr = "7E0";
   S.connected = true; setStatus("подключено", "on"); enable(true);
