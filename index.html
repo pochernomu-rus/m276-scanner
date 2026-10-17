@@ -339,17 +339,18 @@ function onRx(e) {
 function onData(s) { S.buf += s; if (S.buf.includes(">") && S.waiter) { const r = S.buf; S.buf = ""; const w = S.waiter; S.waiter = null; w(r); } }
 const errText = e => [e?.name, e?.message].filter(Boolean).join(": ") || String(e);
 const withTimeout = (p, ms, what) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error("нет ответа за " + ms / 1000 + " с: " + what)), ms))]);
-// Способы записи по очереди: первый, что сработал, запоминаем (Bluefy отказывает в некоторых без текста ошибки)
+// Способы записи по очереди: первый, что сработал, запоминаем (Bluefy отказывает в некоторых без текста ошибки).
+// Последнее число: сколько мс ждать запись. CX на Mac отвечает только на запись с подтверждением, поэтому ей даём 10 с
 const WRITE_WAYS = [
-  ["с подтверждением", c => c.properties.write && c.writeValueWithResponse, (c, d) => c.writeValueWithResponse(d)],
-  ["без подтверждения", c => c.properties.writeWithoutResponse && c.writeValueWithoutResponse, (c, d) => c.writeValueWithoutResponse(d)],
-  ["writeValue", c => c.writeValue, (c, d) => c.writeValue(d)],
+  ["с подтверждением", c => c.properties.write && c.writeValueWithResponse, (c, d) => c.writeValueWithResponse(d), 10000],
+  ["без подтверждения", c => c.properties.writeWithoutResponse && c.writeValueWithoutResponse, (c, d) => c.writeValueWithoutResponse(d), 3000],
+  ["writeValue", c => c.writeValue, (c, d) => c.writeValue(d), 3000],
 ];
 async function writeChunk(chunk) {
-  if (S.writeWay) return withTimeout(S.writeWay[2](S.tx, chunk), 3000, "запись " + S.writeWay[0]);
+  if (S.writeWay) return withTimeout(S.writeWay[2](S.tx, chunk), S.writeWay[3], "запись " + S.writeWay[0]);
   let last;
   for (const w of WRITE_WAYS.filter(w => w[1](S.tx))) {
-    try { await withTimeout(w[2](S.tx, chunk), 3000, "запись " + w[0]); S.writeWay = w; log("Запись в адаптер: " + w[0]); return; }
+    try { await withTimeout(w[2](S.tx, chunk), w[3], "запись " + w[0]); S.writeWay = w; log("Запись в адаптер: " + w[0]); return; }
     catch (e) { last = e; log("Запись " + w[0] + " не прошла: " + errText(e)); }
   }
   throw new Error("адаптер не принимает команды (" + errText(last) + ")");
@@ -357,8 +358,8 @@ async function writeChunk(chunk) {
 // Пробуем каждый способ записи командой ATI и оставляем тот, на который адаптер ответил
 async function probeWrite() {
   for (const w of WRITE_WAYS.filter(w => w[1](S.tx))) {
-    S.writeWay = w;
-    try { const r = await cmd("ATI", 3000); log("Запись " + w[0] + ": адаптер ответил «" + r.replace(/\s+/g, " ").trim() + "»"); return; }
+    S.writeWay = w; const t0 = Date.now();
+    try { const r = await cmd("ATI", w[3] + 3000); log("Ответ на запись " + w[0] + " за " + (Date.now() - t0) + " мс"); log("Запись " + w[0] + ": адаптер ответил «" + r.replace(/\s+/g, " ").trim() + "»"); return; }
     catch (e) { log("Запись " + w[0] + ": ответа нет (" + errText(e) + ")"); }
   }
   S.writeWay = null;
