@@ -196,7 +196,12 @@ input[type=text] { flex: 1; min-width: 0; font: 14px var(--f-mono); padding: 10p
   <section>
     <h2 id="find">Поиск скрытых параметров</h2>
     <p class="note">Ищем параметры, которых нет в стандартном OBD, например температуру масла АКПП. Делай на стоящей машине: зажигание включено или мотор на холостых. Отправляются только запросы чтения.</p>
-    <p class="note">Порядок: 1 → 2 (или 3) найдут, на какие запросы блок отвечает. Потом «Запись сценария» ниже покажет, какие байты в ответах меняются вместе с оборотами, педалью или прогревом.</p>
+    <h3 style="margin:10px 0 4px">0. Готовые параметры OBDb</h3>
+    <p class="note">Адреса и формулы из открытой базы OBDb (github.com/OBDb/Mercedes-Benz-C-Class, общий профиль на все C-Class). На нашей машине не проверены: кнопка один раз отправит каждый запрос и покажет, ответил ли блок и что получилось по формуле. Сверь с правдой (масло и ATF после прогрева около 80–100 °C, передача меняется P/R/N/D), потом выводи на приборы.</p>
+    <div class="row" style="margin:8px 0"><button id="btnObdb" disabled>Проверить готовые параметры</button></div>
+    <p id="obdbProg" class="meta"></p>
+    <div id="obdbOut"></div>
+    <p class="note" style="margin-top:12px">Порядок: 1 → 2 (или 3) найдут, на какие запросы блок отвечает. Потом «Запись сценария» ниже покажет, какие байты в ответах меняются вместе с оборотами, педалью или прогревом.</p>
     <div class="row" style="margin:8px 0">
       <select id="discTarget" aria-label="Блок">
         <option value="7E1">АКПП, адрес 7E1 (стандарт OBD, проверим)</option>
@@ -296,7 +301,7 @@ const S = { dev: null, rx: null, tx: null, buf: "", waiter: null, busy: Promise.
 
 function log(s) { S.logLines.push(new Date().toISOString().slice(11, 23) + " " + s); if (S.logLines.length > 400) S.logLines.shift(); const el = $("log"); el.textContent = (el.textContent + s + "\n").slice(-6000); el.scrollTop = el.scrollHeight; }
 function setStatus(txt, cls) { const el = $("status"); el.textContent = txt; el.className = "status " + (cls || ""); }
-function enable(on) { ["btnLive", "btnRec", "btnInfo", "btnDtc", "btnMis", "btnFF", "btnRdy", "btnDiscId", "btnDiscKwp", "btnDiscUds", "btnSend", "btnDisconnect", "btnSession"].forEach(id => $(id).disabled = !on);
+function enable(on) { ["btnLive", "btnRec", "btnInfo", "btnDtc", "btnMis", "btnFF", "btnRdy", "btnDiscId", "btnDiscKwp", "btnDiscUds", "btnObdb", "btnSend", "btnDisconnect", "btnSession"].forEach(id => $(id).disabled = !on);
   $("btnConnect").disabled = on; $("btnDemo").disabled = on; $("btnApDemo").disabled = on || !!S.ap; S.on = on; scnEnable(); }
 
 // ---------- BLE transport: любой BLE-адаптер ELM327 ----------
@@ -712,7 +717,7 @@ const hex4 = n => n.toString(16).toUpperCase().padStart(4, "0");
 S.disc = { target: null, ident: [], hits: [], snaps: [], off: new Set() }; S.hdr = "7E0"; S.discStop = false;
 function discTarget() { const c = $("discCustom").value.trim().toUpperCase(); return /^[0-7][0-9A-F]{2}$/.test(c) ? c : $("discTarget").value; }
 async function setHeader(h) { if (S.hdr !== h) { await cmd("ATSH" + h); S.hdr = h; } }
-function discBusy(on) { ["btnDiscId", "btnDiscKwp", "btnDiscUds", "btnDiscSnap", "btnDiscSave"].forEach(id => $(id).disabled = on); $("btnDiscStop").disabled = !on; }
+function discBusy(on) { ["btnDiscId", "btnDiscKwp", "btnDiscUds", "btnDiscSnap", "btnDiscSave", "btnObdb"].forEach(id => $(id).disabled = on); $("btnDiscStop").disabled = !on; }
 async function discPrepare() {
   const t = discTarget();
   if (S.live) stopLive();
@@ -913,7 +918,7 @@ async function scnSave() {
 // ---------- свои приборы: найденные скрытые параметры на главном экране ----------
 S.custom = []; S.scnCand = [];
 const esc = t => String(t).replace(/[&<>"]/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[ch]));
-function customRaw(c, hex) { const b = scnBytes(c.q, hex); if (!b || b.length <= c.i + (c.word ? 1 : 0)) return null; return c.word ? b[c.i] * 256 + b[c.i + 1] : b[c.i]; }
+function customRaw(c, hex) { const b = scnBytes(c.q, hex); if (!b || b.length <= c.i + (c.word ? 1 : 0)) return null; const v = c.word ? b[c.i] * 256 + b[c.i + 1] : b[c.i]; return c.sign && c.word && v >= 32768 ? v - 65536 : v; }
 async function customTick(fresh) {
   if (!S.custom.length || S.scnRun) return;
   const now = performance.now(); if (now - (S.custT || 0) < (S.pullMode ? 2000 : 1000)) return; S.custT = now;
@@ -980,6 +985,48 @@ async function candAdd(k) {
   S.custom.push({ id: Date.now().toString(36), name, unit: x.unit, target: x.target, q: x.q, i: x.i, word: x.word, a: x.a, b: x.b, d: x.d, warn: Number.isFinite(w) ? w : null });
   await customSave(); renderScn();
   $("scnProg").textContent = `«${name}» добавлен на приборы. Включи «Старт опроса», он будет обновляться раз в секунду.`;
+}
+
+// ---------- готовые параметры из OBDb: проверить ответ и вывести на приборы ----------
+// Источник: github.com/OBDb/Mercedes-Benz-C-Class signalsets/v3/default.json (CC BY-SA 4.0). Байт i = смещение OBDb в битах / 8 после эха сервиса и запроса. Формулы OBDb в °F пересчитаны в °C.
+const OBDB = [
+  { target: "7E0", q: "222095", name: "Масло °C", unit: "°C", i: 0, word: false, a: 0.75, b: -47.78, d: 0, warn: 130 },
+  { target: "7E0", q: "222017", name: "Радиатор °C", unit: "°C", i: 0, word: true, a: 0.46875, b: 0, d: 0, warn: null },
+  { target: "7E0", q: "222030", name: "Топливо, л", unit: "л", i: 0, word: true, a: 0.09993, b: 0, d: 1, warn: null },
+  { target: "7E1", q: "2130", name: "Передача", unit: "", i: 10, word: false, a: 1, b: 0, d: 0, warn: null },
+  { target: "7E1", q: "2130", name: "Проскальз. ГТ", unit: "об/мин", i: 1, word: false, a: 1, b: 0, d: 0, warn: null },
+  { target: "7E1", q: "2130", name: "ATF °C (21 30)", unit: "°C", i: 11, word: false, a: 1, b: -50, d: 0, warn: 120 },
+  { target: "7E1", q: "2134", name: "ATF °C (21 34)", unit: "°C", i: 9, word: true, sign: true, a: 0.1, b: 0, d: 1, warn: 120 },
+  { target: "7E1", q: "220230", name: "ATF °C (22 0230)", unit: "°C", i: 11, word: false, a: 1, b: -50, d: 0, warn: 120 },
+  { target: "7E1", q: "220234", name: "ATF °C (22 0234)", unit: "°C", i: 3, word: false, a: 1, b: -50, d: 0, warn: 120 },
+];
+S.obdb = {};
+async function obdbCheck() {
+  if (S.live) stopLive(); discBusy(true); $("btnDiscStop").disabled = true; S.obdb = {};
+  try {
+    for (const t of ["7E0", "7E1"]) { await setHeader(t);
+      for (const q of [...new Set(OBDB.filter(x => x.target === t).map(x => x.q))]) {
+        $("obdbProg").textContent = `Спрашиваю ${t} ${q}…`;
+        S.obdb[t + q] = classify(parseHex(await cmd(q, 2000).catch(() => "")), parseInt(q.slice(0, 2), 16)); renderObdb(); } }
+    await setHeader("7E0");
+    const ok = OBDB.filter(x => obdbVal(x) != null).length;
+    $("obdbProg").textContent = `Готово: значение получилось у ${ok} из ${OBDB.length}. Проверь, правдоподобно ли оно.`;
+  } catch (e) { $("obdbProg").textContent = "Ошибка: " + e.message; }
+  discBusy(false); $("btnDiscStop").disabled = true;
+}
+function obdbVal(x) { const r = S.obdb[x.target + x.q]; if (r?.kind !== "ok") return null; const raw = customRaw(x, r.data); return raw == null ? null : raw * x.a + x.b; }
+function renderObdb() {
+  $("obdbOut").innerHTML = OBDB.map((x, k) => { const r = S.obdb[x.target + x.q], v = obdbVal(x);
+    const has = S.custom.some(m => m.target === x.target && m.q === x.q && m.i === x.i && m.word === x.word);
+    const st = !r ? "ещё не проверяли" : r.kind === "ok" ? (v == null ? `ответ короче ожидаемого: ${r.data}` : `ответ ${r.data} → <b>${v.toFixed(x.d)} ${x.unit}</b>`) : r.kind === "отказ" ? `блок отказал (код ${r.nrc})` : r.kind === "нет ответа" ? "нет ответа" : `непонятный ответ ${r.data}`;
+    return `<div class="cand"><div><div class="ttl">${esc(x.name)}</div><div class="meta">${x.target} · ${x.q} · ${x.word ? "байты " + (x.i + 1) + "–" + (x.i + 2) : "байт " + (x.i + 1)} · ${st}</div></div>
+      ${v != null ? `<button data-oadd="${k}" ${has ? "disabled" : ""}>${has ? "Уже на приборах" : "На приборы"}</button>` : ""}</div>`; }).join("");
+}
+async function obdbAdd(k) {
+  const x = OBDB[k]; if (!x) return;
+  S.custom.push({ id: Date.now().toString(36), name: x.name, unit: x.unit, target: x.target, q: x.q, i: x.i, word: x.word, sign: !!x.sign, a: x.a, b: x.b, d: x.d, warn: x.warn });
+  await customSave(); renderObdb();
+  $("obdbProg").textContent = `«${x.name}» добавлен на приборы${x.warn != null ? `, предупреждение выше ${x.warn} ${x.unit}` : ""}. Включи «Старт опроса», он будет обновляться раз в секунду.`;
 }
 
 // ---------- one-button session: everything Claude needs in one file ----------
@@ -1384,7 +1431,8 @@ async function renderReports() {
 }
 document.addEventListener("click", async e => {
   const ca = e.target?.dataset?.cadd; if (ca != null) { await candAdd(+ca); return; }
-  const cd = e.target?.dataset?.cdel; if (cd) { const c = S.custom.find(x => x.id === cd); if (c && confirm(`Убрать «${c.name}» с приборов?`)) { S.custom = S.custom.filter(x => x.id !== cd); delete S.vals["c_" + cd]; await customSave(); if (S.scn) renderScn(); } return; }
+  const oa = e.target?.dataset?.oadd; if (oa != null) { await obdbAdd(+oa); return; }
+  const cd = e.target?.dataset?.cdel; if (cd) { const c = S.custom.find(x => x.id === cd); if (c && confirm(`Убрать «${c.name}» с приборов?`)) { S.custom = S.custom.filter(x => x.id !== cd); delete S.vals["c_" + cd]; await customSave(); renderObdb(); if (S.scn) renderScn(); } return; }
   const del = e.target?.dataset?.del;
   if (del) { if (confirm("Удалить отчёт " + del.slice(0, 16).replace("T", " ") + "?")) { await dbDo("reports", "readwrite", s => s.delete(del)).catch(() => {}); renderReports(); } return; }
   const nid = e.target?.dataset?.note;
@@ -1412,7 +1460,7 @@ function startApDemo() {
 
 // ---------- startup: подхватить знакомый адаптер без нажатий, восстановить оборванную поездку ----------
 async function boot() {
-  S.custom = (await kvGet("custom")) || []; renderGauges();
+  S.custom = (await kvGet("custom")) || []; renderGauges(); renderObdb();
   await recoverCrashed(); renderReports();
   S.knownDev = await knownDevice();
   if (S.knownDev && !S.connected && !S.demo) { log("Знакомый адаптер " + (S.knownDev.name || "") + ", подключаюсь сам"); tryAutoConnect(); }
@@ -1446,6 +1494,7 @@ $("btnMis").onclick = readMisfire;
 $("btnFF").onclick = readFreezeFrame;
 $("btnRdy").onclick = readReadiness;
 $("btnDiscId").onclick = discIdentify;
+$("btnObdb").onclick = obdbCheck; renderObdb();
 $("btnDiscKwp").onclick = () => discScan(0x21);
 $("btnDiscUds").onclick = () => discScan(0x22);
 $("btnDiscStop").onclick = () => { S.discStop = true; };
